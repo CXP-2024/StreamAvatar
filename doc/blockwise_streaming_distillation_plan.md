@@ -236,10 +236,16 @@ checkpoint 内容：
 
 ### Phase 2: 离线 verify
 
-新增 verify 脚本：
+已新增 verify 脚本：
 
-```text
-teacher video vs blockwise student video
+```bash
+.venv/bin/python verify_blockwise_distill.py \
+  --checkpoint outputs/blockwise_stream_distill/blockwise_best.pt \
+  --audio wav_files/woc.wav \
+  --ref-image img_files/person1.png \
+  --ref-npz img_files/person1.npz \
+  --output-dir outputs/verify_blockwise \
+  --render
 ```
 
 横向 concat 对比：
