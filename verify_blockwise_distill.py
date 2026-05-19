@@ -43,7 +43,16 @@ from train_blockwise_distill import (
 from verify_distill import get_reference, make_side_by_side, render_video
 
 
-def load_blockwise_student(checkpoint_path, cfg, device):
+def load_checkpoint_config(checkpoint_path, fallback_config_path):
+    fallback_cfg = OmegaConf.load(fallback_config_path)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    if "config" not in checkpoint:
+        return fallback_cfg, checkpoint
+    saved_cfg = OmegaConf.create(checkpoint["config"])
+    return saved_cfg, checkpoint
+
+
+def load_blockwise_student(checkpoint, cfg, device):
     student = BlockARStudent(
         audio_dim=768,
         motion_dim=cfg.model.vae_codebook_size,
@@ -54,7 +63,6 @@ def load_blockwise_student(checkpoint_path, cfg, device):
         heads=cfg.student.heads,
         dropout=cfg.student.dropout,
     ).to(device)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
     student.load_state_dict(checkpoint["student"], strict=True)
     student.eval()
     for param in student.parameters():
@@ -129,7 +137,7 @@ def main():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for DyStream verification")
     device = torch.device("cuda")
-    cfg = OmegaConf.load(args.config)
+    cfg, checkpoint = load_checkpoint_config(args.checkpoint, args.config)
     if args.teacher_steps is not None:
         cfg.teacher.denoising_steps = args.teacher_steps
     if args.guidance_mode is not None:
@@ -145,10 +153,15 @@ def main():
     print(f"  ref npz:    {args.ref_npz}")
     print(f"  teacher:    {cfg.teacher.guidance_mode}, {cfg.teacher.denoising_steps} step(s)")
     print(f"  student:    K={cfg.student.block_frames}, H={cfg.student.history_frames}")
+    if "config" in checkpoint:
+        print("  config:     loaded from checkpoint")
+    else:
+        print(f"  config:     loaded from {args.config}")
 
     print("\n[1/4] Loading models...")
     teacher = load_teacher(cfg).to(device)
-    student, ckpt = load_blockwise_student(args.checkpoint, cfg, device)
+    checkpoint = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in checkpoint.items()}
+    student, ckpt = load_blockwise_student(checkpoint, cfg, device)
     print(f"  student checkpoint step={ckpt.get('step', 'unknown')} loss={ckpt.get('loss', float('nan'))}")
 
     print("[2/4] Preparing inputs...")
