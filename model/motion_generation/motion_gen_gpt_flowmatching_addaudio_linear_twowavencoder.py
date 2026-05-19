@@ -1,4 +1,5 @@
 import math
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -229,7 +230,8 @@ def make_attention_causal(attn: Wav2Vec2Attention):
 class WrapedWav2Vec(nn.Module):
     def __init__(self, layers: int = 1):
         super().__init__()
-        base = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        wav2vec_path = os.environ.get("DYSTREAM_WAV2VEC_PATH", "pretrained_model/wav2vec2-base-960h")
+        base = Wav2Vec2Model.from_pretrained(wav2vec_path, local_files_only=True)
         self.feature_extractor = base.feature_extractor
         self.feature_projection = base.feature_projection
         self.encoder = base.encoder
@@ -351,7 +353,8 @@ class Audio2FaceGPT(nn.Module):
         self.cfg = cfg
         self.audio_encoder_face = WrapedWav2Vec(layers=self.cfg.wav2vec_layer)
         self.audio_encoder_face_other = WrapedWav2Vec(layers=self.cfg.wav2vec_layer)
-        self.audio_processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+        wav2vec_path = os.environ.get("DYSTREAM_WAV2VEC_PATH", "pretrained_model/wav2vec2-base-960h")
+        self.audio_processor = Wav2Vec2Processor.from_pretrained(wav2vec_path, local_files_only=True)
         self.audio_dim = audio_dim
         self.face_dim = face_dim
         self.hidden_size = hidden_size
@@ -507,6 +510,8 @@ class Audio2FaceGPT(nn.Module):
         past_audio_other=None,
         noise_scheduler=None,
         num_inference_steps=10,
+        profile=None,
+        guidance_mode="full_5way",
     ):
         use_pre_compute_audio_feature = True
         audio = audio_self
@@ -514,9 +519,6 @@ class Audio2FaceGPT(nn.Module):
         audio2face_fea = self.get_audio2face_fea(audio_self, past_audio_self, n)
         audio2face_fea_other = self.get_audio2face_fea_other(audio_other, past_audio_other, n)
         device = audio.device
-        if noise_scheduler is not None:
-            noise_scheduler.set_timesteps(num_inference_steps, device=device)
-            timesteps = noise_scheduler.timesteps
         audio_features = audio2face_fea
         audio_other_features = audio2face_fea_other
         if use_pre_compute_audio_feature:
@@ -533,6 +535,14 @@ class Audio2FaceGPT(nn.Module):
         audio_hidden_2 = self.audio_audioother_fusion(torch.cat([audio_hidden * 0, audio_other_hidden * 1], dim=-1))
         audio_hidden_3 = self.audio_audioother_fusion(torch.cat([audio_hidden * 1, audio_other_hidden * 1], dim=-1))
         anchor_hidden = self.anchor_embed(anchor_latent)
+        if guidance_mode == "full_5way":
+            branch_count = 5
+        elif guidance_mode == "uncond_all_2way":
+            branch_count = 2
+        elif guidance_mode == "all_only":
+            branch_count = 1
+        else:
+            raise ValueError(f"Unsupported guidance_mode: {guidance_mode}")
         causal_mask = self.generate_causal_mask(seq_len, device)
         cross_causal_mask = self.generate_cross_causal_mask(seq_len, device)
         face_hidden_last = self.face_embed(past_motion)
@@ -540,28 +550,51 @@ class Audio2FaceGPT(nn.Module):
         face_hidden[:, :self.inpainting_length] = face_hidden_last
         face_outputs = []
         for t in range(self.inpainting_length, seq_len):
+            if profile is not None and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_gpt = time.perf_counter() if profile is not None else None
             x = face_hidden[:, :t]
-            x = torch.cat([x] * 5, dim=0)
-            audio_hidden_input = torch.cat(
-                [
-                    audio_hidden_0[:, :t],
-                    audio_hidden_0[:, :t],
-                    audio_hidden_1[:, :t],
-                    audio_hidden_2[:, :t],
-                    audio_hidden_3[:, :t],
-                ],
-                dim=0,
-            )
-            anchor_hidden_input = torch.cat(
-                [
-                    anchor_hidden * 0,
-                    anchor_hidden * 1,
-                    anchor_hidden * 0,
-                    anchor_hidden * 0,
-                    anchor_hidden * 1,
-                ],
-                dim=0,
-            )
+            if guidance_mode == "full_5way":
+                x = torch.cat([x] * 5, dim=0)
+                audio_hidden_input = torch.cat(
+                    [
+                        audio_hidden_0[:, :t],
+                        audio_hidden_0[:, :t],
+                        audio_hidden_1[:, :t],
+                        audio_hidden_2[:, :t],
+                        audio_hidden_3[:, :t],
+                    ],
+                    dim=0,
+                )
+                anchor_hidden_input = torch.cat(
+                    [
+                        anchor_hidden * 0,
+                        anchor_hidden * 1,
+                        anchor_hidden * 0,
+                        anchor_hidden * 0,
+                        anchor_hidden * 1,
+                    ],
+                    dim=0,
+                )
+            elif guidance_mode == "uncond_all_2way":
+                x = torch.cat([x] * 2, dim=0)
+                audio_hidden_input = torch.cat(
+                    [
+                        audio_hidden_0[:, :t],
+                        audio_hidden_3[:, :t],
+                    ],
+                    dim=0,
+                )
+                anchor_hidden_input = torch.cat(
+                    [
+                        anchor_hidden * 0,
+                        anchor_hidden * 1,
+                    ],
+                    dim=0,
+                )
+            else:
+                audio_hidden_input = audio_hidden_3[:, :t]
+                anchor_hidden_input = anchor_hidden
             for block in self.blocks:
                 x = block(
                     x,
@@ -572,25 +605,40 @@ class Audio2FaceGPT(nn.Module):
                 )
             x_t = self.output_norm(x[:, -1:])
             gpt_output_t = self.output_proj(x_t)
+            if profile is not None:
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                profile["gpt"] = profile.get("gpt", 0.0) + (time.perf_counter() - t_gpt)
             if noise_scheduler is not None:
+                if profile is not None and torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                t_fm = time.perf_counter() if profile is not None else None
+                noise_scheduler.set_timesteps(num_inference_steps, device=device)
+                timesteps = noise_scheduler.timesteps
                 latent_t = torch.randn_like(gpt_output_t[:bs])
                 for i, timestep in enumerate(timesteps):
-                    t_batch = torch.full((bs,), timestep, device=device, dtype=torch.long)
-                    latent_model_input = latent_t
+                    t_batch = torch.full((bs * branch_count,), timestep, device=device, dtype=torch.long)
+                    latent_model_input = latent_t.repeat(branch_count, 1, 1)
                     time_embedding = self.time_embed(t_batch).unsqueeze(1)
                     output_batch = self.diffusion_head(
                         latent_model_input,
                         gpt_output_t,
                         temb=time_embedding,
                     )
-                    noise_pred_uncond, noise_pred_cond_anchor, noise_pred_cond_audio, noise_pred_cond_audio_other, noise_pred_cond_all = output_batch.chunk(5, dim=0)
-                    noise_pred = (
-                        noise_pred_uncond
-                        + self.cfg_audio * (noise_pred_cond_audio - noise_pred_uncond)
-                        + self.cfg_audio_other * (noise_pred_cond_audio_other - noise_pred_uncond)
-                        + self.cfg_anchor * (noise_pred_cond_anchor - noise_pred_uncond)
-                        + self.cfg_all * (noise_pred_cond_all - noise_pred_uncond)
-                    )
+                    if guidance_mode == "full_5way":
+                        noise_pred_uncond, noise_pred_cond_anchor, noise_pred_cond_audio, noise_pred_cond_audio_other, noise_pred_cond_all = output_batch.chunk(5, dim=0)
+                        noise_pred = (
+                            noise_pred_uncond
+                            + self.cfg_audio * (noise_pred_cond_audio - noise_pred_uncond)
+                            + self.cfg_audio_other * (noise_pred_cond_audio_other - noise_pred_uncond)
+                            + self.cfg_anchor * (noise_pred_cond_anchor - noise_pred_uncond)
+                            + self.cfg_all * (noise_pred_cond_all - noise_pred_uncond)
+                        )
+                    elif guidance_mode == "uncond_all_2way":
+                        noise_pred_uncond, noise_pred_cond_all = output_batch.chunk(2, dim=0)
+                        noise_pred = noise_pred_uncond + self.cfg_all * (noise_pred_cond_all - noise_pred_uncond)
+                    else:
+                        noise_pred = output_batch
                     sigma_idx = noise_scheduler.step_index
                     if sigma_idx is None:
                         noise_scheduler._init_step_index(timestep)
@@ -601,6 +649,10 @@ class Audio2FaceGPT(nn.Module):
                         velocity, timestep, latent_t, return_dict=False
                     )[0]
                 denoised_output_t = latent_t
+                if profile is not None:
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    profile["fm"] = profile.get("fm", 0.0) + (time.perf_counter() - t_fm)
             face_outputs.append(denoised_output_t)
             if t < seq_len:
                 face_hidden[:, t] = self.face_embed(denoised_output_t.squeeze(1))
@@ -616,6 +668,9 @@ class Audio2FaceGPT(nn.Module):
         anchor_motion=None,
         noise_scheduler=None,
         num_inference_steps=10,
+        profile=None,
+        guidance_mode="full_5way",
+        stream_stride=1,
     ):
         inpainting_length = self.inpainting_length
         length = cond_motion.shape[1]
@@ -631,7 +686,7 @@ class Audio2FaceGPT(nn.Module):
         window = self.cfg.cbh_window_length
         pre_frames = self.inpainting_length
         prev_audio_frames = self.cfg.prev_audio_frames
-        stride = 1
+        stride = max(1, int(stream_stride))
         rec_all_face = []
         past_motion = cond_motion[:, :pre_frames, :]
         past_audio = audio[:, : pre_frames * (self.cfg.audio_fps // self.cfg.pose_fps)]
@@ -639,27 +694,49 @@ class Audio2FaceGPT(nn.Module):
         past_audio_self = None
         past_audio_other = None
         rec_all_face.append(past_motion[:, :inpainting_length])
+        if profile is not None and torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_audio = time.perf_counter() if profile is not None else None
         audio_list = [i.cpu().numpy() for i in audio]
         inputs = self.audio_processor(audio_list, sampling_rate=16000, return_tensors="pt", padding=True).to(audio.device)
+        audio_pad = torch.zeros(
+            inputs.input_values.shape[0],
+            80,
+            device=inputs.input_values.device,
+            dtype=inputs.input_values.dtype,
+        )
         audio2face_fea = self.audio_encoder_face(
-            torch.concat([inputs.input_values, torch.zeros([1, 80], device=inputs.input_values.device)], dim=-1)
+            torch.concat([inputs.input_values, audio_pad], dim=-1)
         )["high_level"]
         audio2face_fea = F.interpolate(
             audio2face_fea.transpose(1, 2), scale_factor=(self.cfg.pose_fps / 50), mode="linear", align_corners=True
         ).transpose(1, 2)
         audio_other_list = [i.cpu().numpy() for i in audio_other]
         inputs = self.audio_processor(audio_other_list, sampling_rate=16000, return_tensors="pt", padding=True).to(audio.device)
+        audio_other_pad = torch.zeros(
+            inputs.input_values.shape[0],
+            80,
+            device=inputs.input_values.device,
+            dtype=inputs.input_values.dtype,
+        )
         audio_other2face_fea = self.audio_encoder_face_other(
-            torch.concat([inputs.input_values, torch.zeros([1, 80], device=inputs.input_values.device)], dim=-1)
+            torch.concat([inputs.input_values, audio_other_pad], dim=-1)
         )["high_level"]
         audio_other2face_fea = F.interpolate(
             audio_other2face_fea.transpose(1, 2), scale_factor=(self.cfg.pose_fps / 50), mode="linear", align_corners=True
         ).transpose(1, 2)
+        if profile is not None:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            profile["audio_encoder"] = profile.get("audio_encoder", 0.0) + (time.perf_counter() - t_audio)
         for i in range(0, total_len, stride):
             start_idx = i
-            end_idx = min(start_idx + window, total_len)
+            gen_frames = min(stride, total_len - start_idx - pre_frames - 1)
+            if gen_frames <= 0:
+                break
+            end_idx = min(start_idx + pre_frames + gen_frames + 1, total_len)
             window_size = end_idx - start_idx
-            if window_size < window:
+            if window_size < pre_frames + gen_frames + 1:
                 break
             audio_slice_len = window_size * (self.cfg.audio_fps // self.cfg.pose_fps)
             audio_slice_start = start_idx * (self.cfg.audio_fps // self.cfg.pose_fps)
@@ -673,14 +750,16 @@ class Audio2FaceGPT(nn.Module):
                 past_audio_other=past_audio_other,
                 audio_other=audio_slice_other,
                 past_motion=past_motion,
-                gen_frames=stride,
+                gen_frames=gen_frames,
                 anchor_latent=anchor_motion,
                 noise_scheduler=noise_scheduler,
                 num_inference_steps=num_inference_steps,
+                profile=profile,
+                guidance_mode=guidance_mode,
             )
             face_latent = out
             past_motion = torch.concat([past_motion, out], dim=1)[:, -inpainting_length:]
-            past_audio = audio_slice[:, : -stride * (self.cfg.audio_fps // self.cfg.pose_fps)]
+            past_audio = audio_slice[:, : -gen_frames * (self.cfg.audio_fps // self.cfg.pose_fps)]
             rec_all_face.append(face_latent)
         rec_all_face = torch.cat(rec_all_face, dim=1)
         return rec_all_face

@@ -2,3 +2,17 @@
 outputs*
 checkpoints*
 tools*
+.pip_cache/
+.hf_cache/
+.venv/
+.mpl_cache/
+pretrained_model/
+results/
+img_files/*current*
+img_files/person*.png
+img_files/person*.npz
+wav_files/*.wav
+data_json/*current*
+data_json/local_*
+configs/motion_gen/*current*
+configs/motion_gen/local_*
