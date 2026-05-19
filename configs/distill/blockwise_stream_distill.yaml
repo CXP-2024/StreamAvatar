@@ -2,7 +2,7 @@
 # Smoke test:
 #   .venv/bin/python train_blockwise_distill.py \
 #     --config configs/distill/blockwise_stream_distill.yaml \
-#     --override data.max_clips=10 training.max_steps=100
+#     --override data.max_clips=10 training.max_steps=100 training.batch_size=8
 
 seed: 123
 
@@ -61,7 +61,7 @@ teacher:
   guidance_mode: all_only
 
 student:
-  block_frames: 8
+  block_frames: 2
   history_frames: 32
   hidden_dim: 512
   layers: 6
@@ -70,7 +70,7 @@ student:
   detach_between_blocks: true
 
 training:
-  batch_size: 4
+  batch_size: 16
   num_epochs: 10
   max_steps: 20000
   learning_rate: 1.0e-4
@@ -79,7 +79,7 @@ training:
   grad_clip: 1.0
   log_every: 50
   save_every: 2000
-  num_workers: 2
+  num_workers: 8
   fp16: true
 
 data:
