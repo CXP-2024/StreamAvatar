@@ -69,7 +69,12 @@ def fmt_timings(timings, frames, pose_fps):
         "",
         f"Reference cache: `{'hit' if timings.get('ref_cache_hit') else 'miss'}`",
         f"Guidance mode: `{timings.get('guidance_mode', 'full_5way')}`",
+        f"Rolling mode: `{'on' if timings.get('rolling_mode') else 'off'}`",
         f"Motion chunk frames: `{timings.get('motion_chunk_frames', 1)}`",
+        f"Rolling chunks: `{timings.get('rolling_chunks', 'n/a')}`",
+        f"Native history frames: `{timings.get('native_history_frames', 'n/a')}`",
+        f"Lookahead frames: `{timings.get('lookahead_frames', 'n/a')}`",
+        f"Algorithmic latency: `{timings.get('algorithmic_latency_sec', 0.0):.3f}s`",
         f"Mux audio: `{'on' if timings.get('mux_audio') else 'off'}`",
         f"Frames: `{frames}`",
         f"Video duration: `{duration:.2f}s`",
@@ -118,7 +123,7 @@ def repeat_batch(value, batch_size):
 
 
 @torch.no_grad()
-def latents_to_video_frames_batched(motion_latents, ref_image_pil, render_batch_size=16):
+def latents_to_video_frames_batched(motion_latents, ref_image_pil, render_batch_size=16, source_motion_latent=None):
     base.load_visualization_model()
 
     transform = base._vis_ctx["transform"]
@@ -130,11 +135,17 @@ def latents_to_video_frames_batched(motion_latents, ref_image_pil, render_batch_
     if motion_latents.dim() == 3:
         motion_latents = motion_latents.squeeze(0)
     motion_latents = motion_latents.to(base.DEVICE).float()
+    if source_motion_latent is None:
+        source = motion_latents[0:1]
+    else:
+        source = source_motion_latent.to(base.DEVICE).float()
+        if source.dim() == 3:
+            source = source.squeeze(0)
+        source = source[:1]
 
     render_batch_size = max(1, int(render_batch_size))
     with torch.inference_mode():
         face_feat = face_encoder(ref_img_tensor)
-        source = motion_latents[0:1]
         recon_chunks = []
         for start in range(0, motion_latents.shape[0], render_batch_size):
             target = motion_latents[start:start + render_batch_size]
@@ -147,6 +158,108 @@ def latents_to_video_frames_batched(motion_latents, ref_image_pil, render_batch_
     recon = torch.cat(recon_chunks, dim=0).float()
     video_np = recon.permute(0, 2, 3, 1).numpy()
     return np.clip((video_np + 1) / 2 * 255, 0, 255).astype("uint8")
+
+
+def pad_audio_window(audio_np, sample_start, sample_len):
+    window = audio_np[sample_start:sample_start + sample_len]
+    if window.shape[0] < sample_len:
+        window = np.pad(window, (0, sample_len - window.shape[0]))
+    return window.astype(np.float32, copy=False)
+
+
+@torch.no_grad()
+def encode_audio_window(model, audio_window, audio_other_window, n_frames):
+    audio_tensor = torch.from_numpy(audio_window).float().unsqueeze(0).to(base.DEVICE)
+    audio_other_tensor = torch.from_numpy(audio_other_window).float().unsqueeze(0).to(base.DEVICE)
+    feat_self = model.get_audio2face_fea(audio_tensor, None, n_frames)
+    feat_other = model.get_audio2face_fea_other(audio_other_tensor, None, n_frames)
+    return audio_tensor, audio_other_tensor, feat_self, feat_other
+
+
+@torch.no_grad()
+def rolling_motion_inference(
+    model,
+    audio_np,
+    anchor_motion,
+    denoising_steps,
+    guidance_mode,
+    chunk_frames,
+    profile_motion,
+    pose_fps,
+    audio_sr,
+):
+    hop = int(audio_sr / pose_fps)
+    prefix_frames = model.inpainting_length
+    chunk_frames = max(1, int(chunk_frames))
+    total_audio_frames = int(np.ceil(len(audio_np) / hop))
+    padded_audio = np.concatenate([
+        np.zeros(prefix_frames * hop, dtype=np.float32),
+        audio_np.astype(np.float32),
+        np.zeros(hop, dtype=np.float32),
+    ])
+    padded_audio_other = np.zeros_like(padded_audio)
+
+    past_motion = anchor_motion.repeat(1, prefix_frames, 1).contiguous()
+    chunks = []
+    profile = {"audio_encoder": 0.0, "gpt": 0.0, "fm": 0.0, "chunks": []} if profile_motion else None
+
+    for start_frame in range(0, total_audio_frames, chunk_frames):
+        gen_frames = min(chunk_frames, total_audio_frames - start_frame)
+        n_frames = prefix_frames + gen_frames + 1
+        sample_start = start_frame * hop
+        sample_len = n_frames * hop
+        audio_window = pad_audio_window(padded_audio, sample_start, sample_len)
+        audio_other_window = pad_audio_window(padded_audio_other, sample_start, sample_len)
+
+        chunk_t0 = stamp()
+        t0 = stamp()
+        audio_tensor, audio_other_tensor, feat_self, feat_other = encode_audio_window(
+            model, audio_window, audio_other_window, n_frames
+        )
+        audio_time = stamp() - t0
+
+        motion_profile = {} if profile_motion else None
+        out = model.one_clip_only_inference(
+            per_compute_audio_feature=feat_self,
+            per_compute_audio_other_feature=feat_other,
+            audio_self=audio_tensor,
+            audio_other=audio_other_tensor,
+            past_audio_self=None,
+            past_audio_other=None,
+            past_motion=past_motion,
+            gen_frames=gen_frames,
+            anchor_latent=anchor_motion,
+            noise_scheduler=base._noise_scheduler,
+            num_inference_steps=int(denoising_steps),
+            profile=motion_profile,
+            guidance_mode=guidance_mode,
+        )
+        past_motion = torch.cat([past_motion, out], dim=1)[:, -prefix_frames:].contiguous()
+        chunks.append(out)
+
+        if profile is not None:
+            chunk_total = stamp() - chunk_t0
+            gpt_time = motion_profile.get("gpt", 0.0)
+            fm_time = motion_profile.get("fm", 0.0)
+            profile["audio_encoder"] += audio_time
+            profile["gpt"] += gpt_time
+            profile["fm"] += fm_time
+            profile["chunks"].append({
+                "start_frame": int(start_frame),
+                "frames": int(gen_frames),
+                "audio_encoder": float(audio_time),
+                "gpt": float(gpt_time),
+                "fm": float(fm_time),
+                "total": float(chunk_total),
+            })
+
+    motion = torch.cat(chunks, dim=1) if chunks else anchor_motion[:, :0]
+    if profile is not None:
+        profile["chunk_count"] = len(profile["chunks"])
+        profile["native_history_frames"] = int(prefix_frames)
+        profile["lookahead_frames"] = 1
+        profile["algorithmic_latency_sec"] = float((chunk_frames + 1) / pose_fps)
+    return motion, profile
 
 
 @torch.no_grad()
@@ -163,6 +276,7 @@ def run_stream_lite(
     motion_chunk_frames,
     mux_audio,
     profile_motion,
+    rolling_mode,
     progress=gr.Progress(track_tqdm=True),
 ):
     if image_input is None:
@@ -174,6 +288,7 @@ def run_stream_lite(
     timings["guidance_mode"] = guidance_mode
     timings["motion_chunk_frames"] = int(motion_chunk_frames)
     timings["mux_audio"] = bool(mux_audio)
+    timings["rolling_mode"] = bool(rolling_mode)
     t_total = stamp()
 
     progress(0.02, desc="Loading models")
@@ -198,10 +313,15 @@ def run_stream_lite(
     hop = int(audio_sr / pose_fps)
 
     audio_np, _ = librosa.load(audio_path, sr=audio_sr)
+    audio_np = audio_np.astype(np.float32)
     prefix_frames = model.inpainting_length
-    audio_np = np.concatenate([np.zeros(prefix_frames * hop, dtype=np.float32), audio_np.astype(np.float32)])
-    audio = torch.from_numpy(audio_np).float().unsqueeze(0).to(base.DEVICE)
-    audio_other = torch.zeros_like(audio)
+    if rolling_mode:
+        audio = None
+        audio_other = None
+    else:
+        audio_with_prefix = np.concatenate([np.zeros(prefix_frames * hop, dtype=np.float32), audio_np])
+        audio = torch.from_numpy(audio_with_prefix).float().unsqueeze(0).to(base.DEVICE)
+        audio_other = torch.zeros_like(audio)
     timings["audio_prepare"] = stamp() - t0
 
     progress(0.34, desc="Generating motion")
@@ -212,8 +332,11 @@ def run_stream_lite(
     if motion_latent.dim() == 2:
         motion_latent = motion_latent.unsqueeze(0)
 
-    total_frames = audio.shape[1] // hop
-    motion_in = motion_latent[:, 0:1, :].repeat(1, total_frames, 1)
+    if rolling_mode:
+        motion_in = None
+    else:
+        total_frames = audio.shape[1] // hop
+        motion_in = motion_latent[:, 0:1, :].repeat(1, total_frames, 1)
 
     model.cfg_audio = float(cfg_audio)
     model.cfg_audio_other = float(cfg_audio_other)
@@ -229,19 +352,32 @@ def run_stream_lite(
 
     motion_profile = {} if profile_motion else None
     with ema_ctx:
-        motion_pred = model.inference(
-            audio,
-            audio_other=audio_other,
-            init_motion=motion_in,
-            cond_motion=motion_in,
-            anchor_motion=motion_latent[:, 0:1, :],
-            noise_scheduler=base._noise_scheduler,
-            num_inference_steps=int(denoising_steps),
-            profile=motion_profile,
-            guidance_mode=guidance_mode,
-            stream_stride=int(motion_chunk_frames),
-        )
-    motion_pred = motion_pred[:, prefix_frames:]
+        if rolling_mode:
+            motion_pred, motion_profile = rolling_motion_inference(
+                model=model,
+                audio_np=audio_np,
+                anchor_motion=motion_latent[:, 0:1, :],
+                denoising_steps=denoising_steps,
+                guidance_mode=guidance_mode,
+                chunk_frames=int(motion_chunk_frames),
+                profile_motion=profile_motion,
+                pose_fps=pose_fps,
+                audio_sr=audio_sr,
+            )
+        else:
+            motion_pred = model.inference(
+                audio,
+                audio_other=audio_other,
+                init_motion=motion_in,
+                cond_motion=motion_in,
+                anchor_motion=motion_latent[:, 0:1, :],
+                noise_scheduler=base._noise_scheduler,
+                num_inference_steps=int(denoising_steps),
+                profile=motion_profile,
+                guidance_mode=guidance_mode,
+                stream_stride=int(motion_chunk_frames),
+            )
+            motion_pred = motion_pred[:, prefix_frames:]
     timings["motion_inference"] = stamp() - t0
     if motion_profile is not None:
         timings["motion_gpt"] = motion_profile.get("gpt", 0.0)
@@ -254,10 +390,20 @@ def run_stream_lite(
             - timings["motion_fm"]
             - timings["motion_audio_encoder"],
         )
+        if "chunk_count" in motion_profile:
+            timings["rolling_chunks"] = motion_profile["chunk_count"]
+            timings["native_history_frames"] = motion_profile["native_history_frames"]
+            timings["lookahead_frames"] = motion_profile["lookahead_frames"]
+            timings["algorithmic_latency_sec"] = motion_profile["algorithmic_latency_sec"]
 
     progress(0.70, desc="Rendering")
     t0 = stamp()
-    frames = latents_to_video_frames_batched(motion_pred, resized_pil, render_batch_size=render_batch_size)
+    frames = latents_to_video_frames_batched(
+        motion_pred,
+        resized_pil,
+        render_batch_size=render_batch_size,
+        source_motion_latent=motion_latent[:, 0:1, :],
+    )
     timings["render"] = stamp() - t0
 
     progress(0.88, desc="Writing video")
@@ -294,6 +440,7 @@ def build_ui():
                     label="Guidance mode",
                 )
                 motion_chunk_frames = gr.Slider(1, 8, value=1, step=1, label="Motion chunk frames")
+                rolling_mode = gr.Checkbox(value=True, label="Rolling chunk inference")
                 mux_audio = gr.Checkbox(value=True, label="Mux audio into output")
                 profile_motion = gr.Checkbox(value=True, label="Profile motion breakdown")
                 run_btn = gr.Button("Run", variant="primary")
@@ -319,6 +466,7 @@ def build_ui():
                 motion_chunk_frames,
                 mux_audio,
                 profile_motion,
+                rolling_mode,
             ],
             outputs=[video, resized, masked, timings],
         )
