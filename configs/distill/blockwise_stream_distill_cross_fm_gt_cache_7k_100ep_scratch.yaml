@@ -1,8 +1,5 @@
-# Block-wise streaming AR distillation.
-# Smoke test:
-#   .venv/bin/python train_blockwise_distill.py \
-#     --config configs/distill/blockwise_stream_distill.yaml \
-#     --override data.max_clips=10 training.max_steps=100 training.batch_size=8
+# From-scratch block-wise cross-attention FM training on 7k preprocessed LRS3/DyStream motion-cache clips.
+# Student is randomly initialized. Frozen DyStream teacher is only used as the audio feature extractor.
 
 seed: 123
 
@@ -10,7 +7,7 @@ checkpoint_path: checkpoints/last.ckpt
 wav2vec_path: pretrained_model/wav2vec2-base-960h
 lrs3_trainval_root: /mnt/pfs/group-jt/zihan.guo/droid/LRS3/lrs3/trainval/trainval
 lrs3_pretrain_root: /mnt/pfs/group-jt/zihan.guo/droid/LRS3/lrs3/pretrain/pretrain
-output_dir: outputs/blockwise_stream_distill
+output_dir: outputs/blockwise_stream_distill_cross_fm_gt_cache_7k_100ep_scratch
 
 model:
   module_name: model.motion_generation.motion_gen_gpt_flowmatching_addaudio_linear_twowavencoder
@@ -62,6 +59,7 @@ teacher:
   guidance_mode: all_only
 
 student:
+  architecture: cross_fm
   block_frames: 2
   history_frames: 32
   hidden_dim: 512
@@ -72,31 +70,35 @@ student:
 
 training:
   batch_size: 64
-  num_epochs: 10
-  max_steps: 20000
+  num_epochs: 100
+  max_steps: 100000
   learning_rate: 1.0e-4
   weight_decay: 0.01
-  warmup_steps: 500
+  warmup_steps: 100
   grad_clip: 1.0
-  log_every: 50
-  save_every: 250
+  log_every: 20
+  save_every: 500
   save_latest_every: 50
   save_every_epoch: true
   num_workers: 8
   fp16: true
+  drop_last: false
   resume_from: null
   resume_metrics: null
 
 data:
+  target_source: cache
+  manifest_path: data_cache/lrs3_dystream_motion/manifest_trainval_7k.json
   max_clips: null
   split_mode: trainval
   audio_duration_sec: 3.0
   anchor_std: 0.35
 
 loss:
-  velocity_weight: 0.5
+  velocity_weight: 1.0
   acceleration_weight: 0.1
   boundary_weight: 0.2
+  delta_weight: 0.0
 
 noise_scheduler:
   num_train_timesteps: 1000

@@ -43,10 +43,13 @@ class LRS3AudioDataset(Dataset):
     def __init__(self, lrs3_root, audio_sr=16000, duration_sec=3.0, max_clips=None):
         self.audio_sr = audio_sr
         self.num_samples = int(duration_sec * audio_sr)
-        self.clips = sorted(glob.glob(os.path.join(lrs3_root, "**", "*.mp4"), recursive=True))
+        roots = list(lrs3_root) if isinstance(lrs3_root, (list, tuple)) else [lrs3_root]
+        self.clips = []
+        for root in roots:
+            self.clips.extend(sorted(glob.glob(os.path.join(root, "**", "*.mp4"), recursive=True)))
         if max_clips:
             self.clips = self.clips[:max_clips]
-        print(f"  Dataset: {len(self.clips)} clips from {lrs3_root}")
+        print(f"  Dataset: {len(self.clips)} clips from {roots}")
 
     def __len__(self):
         return len(self.clips)

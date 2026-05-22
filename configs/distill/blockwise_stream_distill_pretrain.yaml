@@ -10,7 +10,7 @@ checkpoint_path: checkpoints/last.ckpt
 wav2vec_path: pretrained_model/wav2vec2-base-960h
 lrs3_trainval_root: /mnt/pfs/group-jt/zihan.guo/droid/LRS3/lrs3/trainval/trainval
 lrs3_pretrain_root: /mnt/pfs/group-jt/zihan.guo/droid/LRS3/lrs3/pretrain/pretrain
-output_dir: outputs/blockwise_stream_distill
+output_dir: outputs/blockwise_stream_distill_pretrain
 
 model:
   module_name: model.motion_generation.motion_gen_gpt_flowmatching_addaudio_linear_twowavencoder
@@ -89,7 +89,7 @@ training:
 
 data:
   max_clips: null
-  split_mode: trainval
+  split_mode: pretrain
   audio_duration_sec: 3.0
   anchor_std: 0.35
 

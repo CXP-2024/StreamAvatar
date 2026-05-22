@@ -5,8 +5,10 @@ tools*
 .pip_cache/
 .hf_cache/
 .venv/
+.cache/
 .mpl_cache/
 pretrained_model/
+data_cache/
 results/
 img_files/*current*
 img_files/person*.png

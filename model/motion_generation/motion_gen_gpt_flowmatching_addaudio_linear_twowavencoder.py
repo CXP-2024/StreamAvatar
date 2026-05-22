@@ -516,14 +516,13 @@ class Audio2FaceGPT(nn.Module):
         use_pre_compute_audio_feature = True
         audio = audio_self
         n = gen_frames + self.inpainting_length + 1
-        audio2face_fea = self.get_audio2face_fea(audio_self, past_audio_self, n)
-        audio2face_fea_other = self.get_audio2face_fea_other(audio_other, past_audio_other, n)
         device = audio.device
-        audio_features = audio2face_fea
-        audio_other_features = audio2face_fea_other
-        if use_pre_compute_audio_feature:
+        if use_pre_compute_audio_feature and per_compute_audio_feature is not None:
             audio_features = per_compute_audio_feature
             audio_other_features = per_compute_audio_other_feature
+        else:
+            audio_features = self.get_audio2face_fea(audio_self, past_audio_self, n)
+            audio_other_features = self.get_audio2face_fea_other(audio_other, past_audio_other, n)
         audio_features = audio_features[:, 1:]
         audio_other_features = audio_other_features[:, 1:]
         bs, seq_len, _ = audio_features.shape
