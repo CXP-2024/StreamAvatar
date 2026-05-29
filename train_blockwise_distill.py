@@ -37,6 +37,9 @@ os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.path.dirname(os.path.abspa
 from train_distill import LRS3AudioDataset, load_teacher, prepare_rollout_inputs
 
 
+ANCHOR_MEAN_CACHE = {}
+
+
 class BlockARStudent(nn.Module):
     def __init__(
         self,
@@ -751,13 +754,86 @@ class ManifestMotionDataset(Dataset):
         }
 
 
-def prepare_cached_rollout_inputs(audio, motion_latent, cfg, device):
+def _resolve_manifest_item_path(manifest_path, path):
+    if os.path.isabs(path):
+        return path
+    cwd_path = os.path.abspath(path)
+    if os.path.exists(cwd_path):
+        return cwd_path
+    return os.path.join(os.path.dirname(manifest_path), path)
+
+
+def get_anchor_mean(cfg, device):
+    manifest_path = cfg.data.get("manifest_path", None)
+    if not manifest_path:
+        raise ValueError("data.manifest_path is required for mixed sphere anchor mean computation")
+
+    mean_path = cfg.data.get("anchor_mean_path", None)
+    if mean_path is None:
+        mean_path = os.path.join(cfg.output_dir, "anchor_mean.pt")
+    if not os.path.isabs(mean_path):
+        mean_path = os.path.abspath(mean_path)
+
+    cache_key = mean_path
+    if cache_key in ANCHOR_MEAN_CACHE:
+        return ANCHOR_MEAN_CACHE[cache_key].to(device)
+
+    if os.path.exists(mean_path):
+        anchor_mean = torch.load(mean_path, map_location="cpu").float()
+        if anchor_mean.ndim == 1:
+            anchor_mean = anchor_mean.view(1, 1, -1)
+        elif anchor_mean.ndim == 2:
+            anchor_mean = anchor_mean.view(1, 1, anchor_mean.shape[-1])
+        ANCHOR_MEAN_CACHE[cache_key] = anchor_mean
+        return anchor_mean.to(device)
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        items = json.load(f)
+    max_samples = int(cfg.data.get("anchor_mean_samples", 10000))
+    items = items[: min(max_samples, len(items))]
+    if not items:
+        raise ValueError(f"no items found in manifest for anchor mean: {manifest_path}")
+
+    total = None
+    count = 0
+    for item in tqdm(items, desc="computing anchor mean", dynamic_ncols=True, leave=False):
+        cache = torch.load(_resolve_manifest_item_path(manifest_path, item["cache_path"]), map_location="cpu")
+        anchor = cache["motion_latent"][0].float()
+        total = anchor if total is None else total + anchor
+        count += 1
+    anchor_mean = (total / max(count, 1)).view(1, 1, -1).cpu()
+    os.makedirs(os.path.dirname(mean_path), exist_ok=True)
+    torch.save(anchor_mean, mean_path)
+    print(f"  Anchor mean: saved {mean_path} from {count} cache anchors")
+    ANCHOR_MEAN_CACHE[cache_key] = anchor_mean
+    return anchor_mean.to(device)
+
+
+def apply_mixed_sphere_anchor(anchor, cfg, device):
+    real_prob = float(cfg.data.get("real_anchor_prob", 0.5))
+    radius = float(cfg.data.get("anchor_sphere_radius", 6.0))
+    mean = get_anchor_mean(cfg, device).to(dtype=anchor.dtype)
+
+    noise = torch.randn_like(anchor)
+    unit = noise / noise.norm(dim=-1, keepdim=True).clamp_min(1.0e-6)
+    synthetic = mean + radius * unit
+    keep_real = (torch.rand(anchor.shape[0], 1, 1, device=device) < real_prob).to(anchor.dtype)
+    mixed_anchor = keep_real * anchor + (1.0 - keep_real) * synthetic
+    return mixed_anchor, {
+        "anchor_real_ratio": float(keep_real.mean().item()),
+        "anchor_sphere_radius": radius,
+    }
+
+
+def prepare_cached_rollout_inputs(audio, motion_latent, cfg, device, anchor_override=None):
     hop = int(cfg.model.audio_sr / cfg.model.pose_fps)
     inpaint_len = cfg.model.cbh_window_length - 2
     pad_samples = inpaint_len * hop
     audio_padded = F.pad(audio, (pad_samples, 0))
     audio_other = torch.zeros_like(audio_padded)
     anchor = motion_latent[:, :1, :].to(device)
+    if anchor_override is not None:
+        anchor = anchor_override.to(device)
     total_frames = audio_padded.shape[1] // hop
     motion_in = anchor.repeat(1, total_frames, 1)
     return audio_padded, audio_other, motion_in, anchor, inpaint_len
@@ -765,15 +841,21 @@ def prepare_cached_rollout_inputs(audio, motion_latent, cfg, device):
 
 def compute_student_loss(student, teacher, batch, cfg, device, target_source, noise_scheduler, seed):
     audio = batch["audio"].to(device, non_blocking=True)
+    extra_metrics = {}
 
     with torch.no_grad():
-        if target_source == "cache":
+        if target_source in {"cache", "teacher_cache_anchor", "teacher_cache_anchor_mixed_sphere"}:
             target_seq = batch["motion_latent"].to(device, non_blocking=True)
+            anchor_override = None
+            if target_source == "teacher_cache_anchor_mixed_sphere":
+                real_anchor = target_seq[:, :1, :]
+                anchor_override, extra_metrics = apply_mixed_sphere_anchor(real_anchor, cfg, device)
             audio_padded, audio_other, motion_in, anchor, inpaint_len = prepare_cached_rollout_inputs(
                 audio,
                 target_seq,
                 cfg,
                 device,
+                anchor_override=anchor_override,
             )
         else:
             audio_padded, audio_other, motion_in, anchor, inpaint_len = prepare_rollout_inputs(audio, cfg, device)
@@ -781,6 +863,9 @@ def compute_student_loss(student, teacher, batch, cfg, device, target_source, no
         feat_self, feat_other = extract_audio_features(teacher, audio_padded, audio_other)
         if target_source == "cache":
             teacher_seq = target_seq.detach()
+        elif target_source in {"teacher_cache_anchor", "teacher_cache_anchor_mixed_sphere"}:
+            teacher_out = teacher_rollout(teacher, audio_padded, audio_other, motion_in, anchor, cfg, seed)
+            teacher_seq = teacher_out[:, inpaint_len:].detach()
         else:
             teacher_out = teacher_rollout(teacher, audio_padded, audio_other, motion_in, anchor, cfg, seed)
             teacher_seq = teacher_out[:, inpaint_len:].detach()
@@ -835,11 +920,12 @@ def compute_student_loss(student, teacher, batch, cfg, device, target_source, no
         "loss_delta": float(loss_delta.item()),
         "matched_frames": int(matched),
     }
+    metrics.update(extra_metrics)
     return loss, metrics
 
 
 def build_dataset(cfg, target_source, manifest_path=None, max_clips=None):
-    if target_source == "cache":
+    if target_source in {"cache", "teacher_cache_anchor", "teacher_cache_anchor_mixed_sphere"}:
         return ManifestMotionDataset(
             manifest_path=manifest_path or cfg.data.manifest_path,
             audio_sr=cfg.model.audio_sr,
@@ -856,7 +942,18 @@ def build_dataset(cfg, target_source, manifest_path=None, max_clips=None):
             duration_sec=cfg.data.audio_duration_sec,
             max_clips=max_clips if max_clips is not None else cfg.data.get("max_clips", None),
         )
-    raise ValueError("data.target_source must be one of: teacher, cache")
+    raise ValueError(
+        "data.target_source must be one of: teacher, cache, teacher_cache_anchor, "
+        "teacher_cache_anchor_mixed_sphere"
+    )
+
+
+def next_or_restart(loader, iterator):
+    try:
+        return next(iterator), iterator
+    except StopIteration:
+        iterator = iter(loader)
+        return next(iterator), iterator
 
 
 def evaluate_student(student, teacher, dataloader, cfg, device, target_source, noise_scheduler, max_batches, seed):
@@ -958,7 +1055,10 @@ def train(cfg):
     print("[3/4] Loading audio dataset...")
     target_source = cfg.data.get("target_source", "teacher")
     print(f"  Target source: {target_source}")
-    dataset = build_dataset(cfg, target_source)
+    if target_source == "mixed":
+        dataset = build_dataset(cfg, "cache")
+    else:
+        dataset = build_dataset(cfg, target_source)
 
     drop_last = bool(cfg.training.get("drop_last", target_source == "teacher"))
     dataloader = DataLoader(
@@ -970,17 +1070,46 @@ def train(cfg):
         pin_memory=True,
     )
 
+    teacher_loader = None
+    teacher_iter = None
+    teacher_mix_prob = 0.0
+    if target_source == "mixed":
+        teacher_dataset = build_dataset(
+            cfg,
+            "teacher",
+            max_clips=cfg.data.get("teacher_max_clips", None),
+        )
+        teacher_batch_size = int(cfg.data.get("teacher_batch_size", max(1, cfg.training.batch_size // 4)))
+        teacher_loader = DataLoader(
+            teacher_dataset,
+            batch_size=teacher_batch_size,
+            shuffle=True,
+            num_workers=cfg.data.get("teacher_num_workers", cfg.training.num_workers),
+            drop_last=True,
+            pin_memory=True,
+        )
+        teacher_iter = iter(teacher_loader)
+        teacher_mix_prob = float(cfg.data.get("teacher_mix_prob", 0.3))
+        print(
+            f"  Mixed training: cache batch={cfg.training.batch_size}, "
+            f"teacher batch={teacher_batch_size}, teacher_mix_prob={teacher_mix_prob:.2f}"
+        )
+
     val_loader = None
     val_summary_path = os.path.join(cfg.output_dir, "eval_summary.json")
     eval_history = []
     best_val_loss = float("inf")
     validation_enabled = bool(cfg.get("validation", {}).get("enabled", False))
     if validation_enabled:
-        if target_source != "cache":
-            raise ValueError("validation is currently supported for cache target_source only")
+        if target_source not in {"cache", "mixed", "teacher_cache_anchor", "teacher_cache_anchor_mixed_sphere"}:
+            raise ValueError(
+                "validation is currently supported for cache, mixed, teacher_cache_anchor, "
+                "or teacher_cache_anchor_mixed_sphere target_source only"
+            )
+        validation_target_source = "cache" if target_source == "mixed" else target_source
         val_dataset = build_dataset(
             cfg,
-            target_source,
+            validation_target_source,
             manifest_path=cfg.validation.manifest_path,
             max_clips=cfg.validation.get("max_clips", None),
         )
@@ -1037,20 +1166,39 @@ def train(cfg):
             epoch_boundary_accum = 0.0
             epoch_delta_accum = 0.0
             epoch_steps = 0
-            pbar = tqdm(dataloader, desc=f"epoch {epoch + 1}/{cfg.training.num_epochs}", dynamic_ncols=True, leave=False)
+            if target_source == "mixed":
+                cache_iter = iter(dataloader)
+                pbar = tqdm(
+                    range(steps_per_epoch),
+                    desc=f"epoch {epoch + 1}/{cfg.training.num_epochs}",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+            else:
+                pbar = tqdm(dataloader, desc=f"epoch {epoch + 1}/{cfg.training.num_epochs}", dynamic_ncols=True, leave=False)
             for batch in pbar:
                 if global_step >= cfg.training.max_steps:
                     break
 
                 seed = int(cfg.seed + global_step)
 
+                batch_source = target_source
+                batch_for_loss = batch
+                if target_source == "mixed":
+                    use_teacher = torch.rand((), device="cpu").item() < teacher_mix_prob
+                    batch_source = "teacher" if use_teacher else "cache"
+                    if use_teacher:
+                        batch_for_loss, teacher_iter = next_or_restart(teacher_loader, teacher_iter)
+                    else:
+                        batch_for_loss, cache_iter = next_or_restart(dataloader, cache_iter)
+
                 loss, loss_parts = compute_student_loss(
                     student,
                     teacher,
-                    batch,
+                    batch_for_loss,
                     cfg,
                     device,
-                    target_source,
+                    batch_source,
                     train_flow_scheduler,
                     seed,
                 )
@@ -1085,11 +1233,15 @@ def train(cfg):
                     "loss_boundary": float(loss_parts["loss_boundary"]),
                     "loss_delta": float(loss_parts["loss_delta"]),
                     "matched_frames": int(loss_parts["matched_frames"]),
+                    "target_source": batch_source,
                     "lr": float(lr),
                     "grad_norm": float(grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm),
                     "steps_per_sec": float(global_step / max(elapsed, 1e-6)),
                     "elapsed_sec": float(elapsed),
                 }
+                if "anchor_real_ratio" in loss_parts:
+                    step_metrics["anchor_real_ratio"] = float(loss_parts["anchor_real_ratio"])
+                    step_metrics["anchor_sphere_radius"] = float(loss_parts["anchor_sphere_radius"])
                 metrics_file.write(json.dumps(step_metrics) + "\n")
                 metrics_file.flush()
 
@@ -1115,6 +1267,7 @@ def train(cfg):
                         f"acc={loss_parts['loss_acceleration']:.6f} "
                         f"boundary={loss_parts['loss_boundary']:.6f} "
                         f"delta={loss_parts['loss_delta']:.6f} "
+                        f"source={batch_source} "
                         f"lr={lr:.2e} "
                         f"speed={global_step / max(elapsed, 1e-6):.2f} steps/s"
                     )
@@ -1188,7 +1341,7 @@ def train(cfg):
                         val_loader,
                         cfg,
                         device,
-                        target_source,
+                        validation_target_source,
                         train_flow_scheduler,
                         max_batches=cfg.validation.get("max_batches", None),
                         seed=int(cfg.seed + 1000000 + global_step),
