@@ -18,3 +18,7 @@ data_json/*current*
 data_json/local_*
 configs/motion_gen/*current*
 configs/motion_gen/local_*
+third_party/syncnet_python/.git/
+third_party/syncnet_python/__pycache__/
+third_party/syncnet_python/data/
+third_party/syncnet_python/detectors/s3fd/weights/
