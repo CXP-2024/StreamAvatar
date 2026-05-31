@@ -1,12 +1,12 @@
 # StreamAvatar Report
 
-This folder contains the final course-project style report, following the same NeurIPS preprint template used by the original proposal.
+This folder contains the final course-project style report, using a local NeurIPS preprint template.
 
 Files:
 
 - `StreamAvatar_report.tex`: main report.
 - `ref.bib`: bibliography.
-- `neurips_2024.sty`: local template style file copied from the proposal folder.
+- `neurips_2024.sty`: local template style file.
 - `figures/`: copied experiment figures and qualitative snapshots.
 - `build.sh`: LaTeX build script.
 

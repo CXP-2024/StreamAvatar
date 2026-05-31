@@ -35,3 +35,12 @@ report/*.log
 report/*.out
 report/*.run.xml
 report/*.toc
+proposal/.tectonic_cache/
+proposal/*.aux
+proposal/*.bbl
+proposal/*.bcf
+proposal/*.blg
+proposal/*.log
+proposal/*.out
+proposal/*.run.xml
+proposal/*.toc
