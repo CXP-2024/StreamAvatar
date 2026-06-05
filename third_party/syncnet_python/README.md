@@ -1,10 +1,10 @@
 # SyncNet
 
-This repository contains the demo for the audio-to-video synchronisation network (SyncNet). This network can be used for audio-visual synchronisation tasks including: 
+This repository contains the demo for the audio-to-video synchronisation network (SyncNet). This network can be used for audio-visual synchronisation tasks including:
 1. Removing temporal lags between the audio and visual streams in a video;
-2. Determining who is speaking amongst multiple faces in a video. 
+2. Determining who is speaking amongst multiple faces in a video.
 
-Please cite the paper below if you make use of the software. 
+Please cite the paper below if you make use of the software.
 
 ## Dependencies
 
@@ -37,7 +37,7 @@ python demo_syncnet.py --videofile data/example.avi --tmp_dir /path/to/temp/dire
 
 Check that this script returns approximately the following values (minor differences are expected depending on your platform and package versions):
 ```
-AV offset:      3 
+AV offset:      3
 Min dist:       5.353
 Confidence:     10.021
 ```
@@ -62,7 +62,7 @@ $DATA_DIR/pyavi/$REFERENCE/video_out.avi - output video (as shown below)
 </p>
 
 ## Publications
- 
+
 ```
 @InProceedings{Chung16a,
   author       = "Chung, J.~S. and Zisserman, A.",

@@ -78,7 +78,7 @@ Round 2: 3步教师 → 1步学生  (最终目标)
 for audio_clip in LRS3_trainval_audios:
     noise = torch.randn(...)  # 随机噪声
     teacher_output = teacher.inference(audio, steps=5)  # 5步教师输出
-    
+
     # 保存训练对
     save(noise, teacher_output, audio_features, timestep)
 ```
@@ -99,7 +99,7 @@ for video_clip in LRS3_trainval:
     frames = extract_frames(video_clip)  # 224×224
     frames_resized = resize(frames, 512×512)  # 上采样
     motion_latents = motion_encoder(frames_resized)  # 每帧→512d
-    
+
     # 保存 motion latent 序列 + 对应音频
     save(motion_latents, audio)
 ```

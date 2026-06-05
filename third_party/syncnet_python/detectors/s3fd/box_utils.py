@@ -118,7 +118,7 @@ class Detect(object):
     def __init__(self, num_classes=2,
                     top_k=750, nms_thresh=0.3, conf_thresh=0.05,
                     variance=[0.1, 0.2], nms_top_k=5000):
-        
+
         self.num_classes = num_classes
         self.top_k = top_k
         self.nms_thresh = nms_thresh
@@ -147,7 +147,7 @@ class Detect(object):
             for cl in range(1, self.num_classes):
                 c_mask = conf_scores[cl].gt(self.conf_thresh)
                 scores = conf_scores[cl][c_mask]
-                
+
                 if scores.dim() == 0:
                     continue
                 l_mask = c_mask.unsqueeze(1).expand_as(boxes)
@@ -197,8 +197,8 @@ class PriorBox(object):
                 mean += [cx, cy, s_kw, s_kh]
 
         output = torch.FloatTensor(mean).view(-1, 4)
-        
+
         if self.clip:
             output.clamp_(max=1, min=0)
-        
+
         return output

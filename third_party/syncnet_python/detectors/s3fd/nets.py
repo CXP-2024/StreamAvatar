@@ -43,7 +43,7 @@ class S3FDNet(nn.Module):
             nn.Conv2d(128, 128, 3, 1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),
-            
+
             nn.Conv2d(128, 256, 3, 1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 256, 3, 1, padding=1),
@@ -51,7 +51,7 @@ class S3FDNet(nn.Module):
             nn.Conv2d(256, 256, 3, 1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2, ceil_mode=True),
-            
+
             nn.Conv2d(256, 512, 3, 1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(512, 512, 3, 1, padding=1),
@@ -84,7 +84,7 @@ class S3FDNet(nn.Module):
             nn.Conv2d(512, 128, 1, 1),
             nn.Conv2d(128, 256, 3, 2, padding=1),
         ])
-        
+
         self.loc = nn.ModuleList([
             nn.Conv2d(256, 4, 3, 1, padding=1),
             nn.Conv2d(512, 4, 3, 1, padding=1),
@@ -130,7 +130,7 @@ class S3FDNet(nn.Module):
         for k in range(30, len(self.vgg)):
             x = self.vgg[k](x)
         sources.append(x)
-        
+
         # apply extra layers and cache source layer outputs
         for k, v in enumerate(self.extras):
             x = F.relu(v(x), inplace=True)

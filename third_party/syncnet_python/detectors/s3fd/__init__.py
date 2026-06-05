@@ -24,7 +24,7 @@ class S3FD():
         self.net.load_state_dict(state_dict)
         self.net.eval()
         logger.info('[S3FD] finished loading (%.4f sec)', time.time() - tstamp)
-    
+
     def detect_faces(self, image, conf_th=0.8, scales=[1]):
 
         w, h = image.shape[1], image.shape[0]
