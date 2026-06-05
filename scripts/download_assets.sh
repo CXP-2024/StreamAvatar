@@ -5,8 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 DYSTREAM_ASSET_REPO="${DYSTREAM_ASSET_REPO:-robinwitch/DyStream}"
-AROD_ASSET_REPO="${AROD_ASSET_REPO:-}"
-AROD_ASSET_FILE="${AROD_ASSET_FILE:-blockwise_latest.pt}"
 AROD_GDRIVE_ID="${AROD_GDRIVE_ID:-1El-2l5GZRfrVLEl2-x6ocPyyT9ILxDJS}"
 AROD_GDOWN_PROXY="${AROD_GDOWN_PROXY:-}"
 AROD_OUTPUT_DIR="outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k"
@@ -43,10 +41,7 @@ fi
 
 echo "[3/4] Checking optional AROD checkpoint..."
 mkdir -p "$AROD_OUTPUT_DIR"
-if [[ -n "$AROD_ASSET_REPO" ]]; then
-  huggingface-cli download "$AROD_ASSET_REPO" "$AROD_ASSET_FILE" \
-    --local-dir "$AROD_OUTPUT_DIR"
-elif command -v gdown >/dev/null 2>&1; then
+if command -v gdown >/dev/null 2>&1; then
   gdown_args=()
   if [[ -n "$AROD_GDOWN_PROXY" ]]; then
     gdown_args+=(--proxy "$AROD_GDOWN_PROXY")
@@ -55,13 +50,12 @@ elif command -v gdown >/dev/null 2>&1; then
     -O "$AROD_OUTPUT_DIR/blockwise_latest.pt"
 else
   cat <<'EOF'
-Neither AROD_ASSET_REPO nor gdown is available, so the AROD checkpoint was not downloaded.
+gdown is not available, so the AROD checkpoint was not downloaded.
 Place the student checkpoint manually at:
   outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k/blockwise_latest.pt
 
-Install gdown and rerun this script, or use Hugging Face:
+Install gdown and rerun this script:
   pip install gdown
-  AROD_ASSET_REPO=<owner/repo> AROD_ASSET_FILE=blockwise_latest.pt bash scripts/download_assets.sh
 EOF
 fi
 

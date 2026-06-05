@@ -109,15 +109,7 @@ If your network needs a SOCKS proxy, pass it to `gdown`:
 AROD_GDOWN_PROXY=socks5h://127.0.0.1:7891 bash scripts/download_assets.sh
 ```
 
-If your AROD checkpoint is hosted on Hugging Face instead, provide that repository:
-
-```bash
-AROD_ASSET_REPO=<owner/repo> \
-AROD_ASSET_FILE=blockwise_latest.pt \
-bash scripts/download_assets.sh
-```
-
-If the AROD checkpoint is provided as a release file or shared artifact instead, download it manually and place it at the path shown in step 4 below.
+The AROD checkpoint is hosted on Google Drive, not Hugging Face. Hugging Face is only used here for Wav2Vec2 and the original DyStream base assets.
 
 ### 1. DyStream Teacher Checkpoint
 
