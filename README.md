@@ -1,123 +1,148 @@
-# DyStream: Streaming Dyadic Talking Heads Generation via Flow Matching-based Autoregressive Model
+# StreamAvatar / AROD
 
-[Paper](https://arxiv.org/pdf/2512.24408) | [Webpage](https://robinwitch.github.io/DyStream-Page) | [Online Gradio Web Demo](https://along-reservoir-amino-progress.trycloudflare.com) | [Wandb Training Logs](https://wandb.ai/robinwitch/cbh_together_motion_laent_gpt_v6_dyadic_flowmatching_addaudio_linear_last10frame/runs/zy8ht98m?nw=nwuserrobinwitch)
+StreamAvatar is our DyStream-based audio-driven portrait animation project. The original DyStream teacher is kept as the frozen quality reference and feature provider, while our main model is **AROD**: an **Autoregressive One-step Denoising** student for fast streaming audio-to-motion prediction.
 
-We are gradually releasing the code for this project.
+AROD keeps the autoregressive rollout structure over motion blocks, but replaces the teacher's sequential AR+FM motion generation with one forward pass per short future block. The generated motion latents are rendered by the frozen DyStream/LIA portrait renderer.
 
-## TODO List
-- [x] Offline video generation
-- [x] Gradio Demo
-- [ ] Online video generation
-- [ ] Training code
+## What This Repository Contains
 
-## Online Demo
-You can try out our model directly via the [Online Gradio Web Demo](https://along-reservoir-amino-progress.trycloudflare.com).
+- `app.py`: Gradio demo for the AROD student. It takes a reference face image and driving audio, predicts motion with AROD, then renders a talking-head video.
+- `train_blockwise_distill.py`: AROD/blockwise student architectures, rollout helpers, and training loop.
+- `verify_blockwise_distill.py`: End-to-end teacher/student comparison. It measures teacher and student motion rollout time, renders both videos, and writes side-by-side comparisons.
+- `benchmark_arod_speed.py`: Motion-only speed benchmark. It excludes rendering and muxing so the reported speedup isolates the AROD replacement for teacher motion rollout.
+- `configs/distill/`: student distillation configs. The current demo default is `blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml`.
+- `report/`: final report source/PDF and figures.
+- `proposal/`: reconstructed project proposal source/PDF.
 
-## Setup
+Large checkpoints, cached data, rendered outputs, and local build environments are intentionally kept out of git.
 
-> Minimum Requirement: GPU with 10GB VRAM.
+## Environment
 
-### Environment
-Create a Python environment using conda:
+Use the existing local virtual environment when available:
+
 ```bash
-conda create -n dystream_py11 python=3.11
-conda activate dystream_py11
+cd /mnt/pfs/group-jt/changxun.pan/runs/test/float_playground/DyStream
+source .venv/bin/activate
+```
+
+If you need to rebuild the environment, install from `requirements.txt` in a local environment under this mounted workspace, not under `/root`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Download Checkpoints
-Download the required checkpoints and tools:
+The project expects CUDA and the local pretrained assets/checkpoints already present in this workspace, including:
+
+- `checkpoints/last.ckpt`
+- `pretrained_model/wav2vec2-base-960h`
+- `tools/visualization_0416/`
+- AROD checkpoint under `outputs/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt/`
+
+## Run the AROD App
+
 ```bash
-git clone https://huggingface.co/robinwitch/DyStream
-cd DyStream
-mv tools ../
-mv checkpoints ../
-cd ..
-rm -rf DyStream
+cd /mnt/pfs/group-jt/changxun.pan/runs/test/float_playground/DyStream
+source .venv/bin/activate
+python -u app.py
 ```
 
-## Quick Start
+The app launches on port `7860` by default. The default sample uses:
 
-Launch the Gradio Web Demo
+- Reference image: `img_files/person1.png`
+- Audio: `wav_files/test_audio_60s.wav`
+- AROD config: `configs/distill/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml`
+- Student checkpoint: `outputs/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt/blockwise_latest.pt`
+
+## Verify Teacher vs AROD
+
+Run the full verification suite:
+
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -u app.py
+source .venv/bin/activate
+python verify_blockwise_distill.py \
+  --img-path img_files/person1.png \
+  --audio-path wav_files/test_audio_60s.wav \
+  --train-sample-idx 0
 ```
 
-Alternatively, you can start the demo using the provided shell script:
-Run the demo with a single command:
+This writes metrics and videos to:
+
+```text
+outputs/verify_blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt_suite/
+```
+
+The important output fields are:
+
+- `teacher_time_sec`: frozen DyStream teacher motion rollout time.
+- `student_time_sec`: AROD student motion rollout time.
+- `speedup`: teacher motion time divided by student motion time.
+- `comparison_video`: side-by-side rendered teacher/student video.
+
+Fresh verification on the current B20Z node for the 60s `person1 + test_audio_60s.wav` case produced:
+
+```text
+teacher_time_sec: 29.384
+student_time_sec: 3.752
+speedup: 7.83x
+```
+
+Earlier verification of the same config/output suite recorded `10.24x` on the 60s case. In the report we therefore describe the result as approximately `8x` in the latest fresh run and capable of reaching about `10x` under the same verification setup, rather than claiming a fixed deterministic 10x on every run.
+
+## Motion-Only Speed Benchmark
+
+For a faster timing-only check without rendering videos:
+
 ```bash
-bash run.sh
+source .venv/bin/activate
+python benchmark_arod_speed.py \
+  --config configs/distill/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml \
+  --img-path img_files/person1.png \
+  --audio-path wav_files/test_audio_60s.wav \
+  --output outputs/arod_speed_benchmark.json
 ```
 
-## Batch Inference with Custom Data
+Fresh motion-only timing on the same node produced:
 
-### Configuration
-Configuration files can be referenced and changed in `data_json/sample_files.json`. We provide examples for two scenarios:
-1. Speaker audio only
-2. Speaker and listener audio tracks
-
-### Scenario 1: Speaker Audio Only
-
-Example configuration:
-```json
-{
-    "origin_video_path": null,
-    "resampled_video_path": "img_files/11.png",
-    "audio_path": "wav_files/11.wav",
-    "audio_self_path": "wav_files/11.wav",
-    "audio_other_path": null,
-    "motion_self_path": "img_files/11.npz",
-    "motion_other_path": null,
-    "mode": "test_wild",
-    "dataset_type": "dyadic",
-    "video_id": "single_speaker_11_11"
-}
+```text
+teacher_motion_time_sec: 26.007
+student_motion_time_sec: 3.253
+motion_speedup: 8.00x
 ```
 
-**To use your own image and audio:**
-- Modify the following fields: `resampled_video_path`, `audio_path`, `audio_self_path`, `motion_self_path`, and `video_id`
-- **Required files**: `resampled_video_path` and `audio_self_path` must exist
-- `audio_path` should be identical to `audio_self_path` in this scenario
-- `motion_self_path` can be set by changing the file extension of `resampled_video_path` to `.npz`. This file will be automatically generated during runtime if it doesn't exist
-- `video_id` can be any identifier for organizing your outputs
+This benchmark excludes rendering and audio muxing. It measures only the part AROD replaces: DyStream teacher motion rollout.
 
-### Scenario 2: Speaker and Listener Audio
+## Build the Report
 
-Example configuration:
-```json
-{
-    "origin_video_path": null,
-    "resampled_video_path": "img_files/3.png",
-    "audio_path": "wav_files/_sgIH81kj78-Scene-005+audio_full.wav",
-    "audio_self_path": "wav_files/_sgIH81kj78-Scene-005+audio_v3_1.wav",
-    "audio_other_path": "wav_files/_sgIH81kj78-Scene-005+audio_v3_0.wav",
-    "motion_self_path": "img_files/3.npz",
-    "motion_other_path": null,
-    "mode": "test_wild",
-    "dataset_type": "dyadic",
-    "video_id": "_sgIH81kj78-Scene-005+audio_v3_2"
-}
+```bash
+./report/build.sh
 ```
 
-**To use your own image and audio:**
-- Modify the following fields: `resampled_video_path`, `audio_path`, `audio_self_path`, `audio_other_path`, `motion_self_path`, and `video_id`
-- **Required files**: `resampled_video_path`, `audio_self_path`, and `audio_other_path` must exist
-- `audio_self_path`: speaker audio track
-- `audio_other_path`: listener audio track
-- `audio_path`: combined audio containing both speaker and listener tracks. This is only used for final video rendering and audio merging, not for inference
-- `motion_self_path` can be set by changing the file extension of `resampled_video_path` to `.npz`. This file will be automatically generated during runtime if it doesn't exist
-- `video_id` can be any identifier for organizing your outputs
+Output:
 
-
-
-## Citation
-If you find this work useful, please consider citing:
-```bibtex
-@article{chen2025dystream,
-  title={DyStream: Streaming Dyadic Talking Heads Generation via Flow Matching-based Autoregressive Model},
-  author={Bohong Chen and Haiyang Liu},
-  journal={ArXiv},
-  year={2025},
-  volume={abs/2512.24408},
-}
+```text
+report/StreamAvatar_report.pdf
 ```
+
+## Build the Proposal
+
+```bash
+./proposal/build.sh
+```
+
+Output:
+
+```text
+proposal/StreamAvatar_proposal.pdf
+```
+
+## Current Interpretation
+
+AROD is not a conventional flow model and not a standard GPT-style token-by-token generator. It is a blockwise autoregressive denoising model:
+
+```text
+audio + motion history + anchor + noisy future tokens -> clean future motion block
+```
+
+The student preserves the teacher's rollout structure at the block level, but removes the expensive per-frame AR+FM teacher generation loop. This gives a practical speed-quality trade-off for real-time-capable portrait animation.

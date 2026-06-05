@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(ROOT, ".cache", "matplotlib"))
 
-DEFAULT_CONFIG = "configs/distill/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k.yaml"
+DEFAULT_CONFIG = "configs/distill/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml"
 DEFAULT_AUDIO = "wav_files/test_audio_60s.wav"
 DEFAULT_IMG = "img_files/person2.png"
 
