@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 import time
 import random
+import sys
 
 # Third-party library imports
 import numpy as np
@@ -14,7 +15,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import wandb
+try:
+    import wandb
+except Exception:
+    class _NoOpWandb:
+        @staticmethod
+        def finish():
+            return None
+    wandb = _NoOpWandb()
 from lightning import LightningModule
 from lightning import Trainer, seed_everything
 from lightning.pytorch.strategies import DDPStrategy
@@ -330,7 +338,9 @@ class MotionGenLightningModule(LightningModule):
         return test_list, current_save_path, save_video_dir, test_loss, total_length
     
     def _inference_one_file(self, test_file, test_loss, total_length, ref_img_path, save_path, calculate_loss=False):
+        infer_start = time.perf_counter()
         audio, _ = librosa.load(test_file["audio_self_path"], sr=self.cfg.model.audio_sr)
+        audio_load_done = time.perf_counter()
         additional_motion_seq = self.model.inpainting_length
         audio = np.concatenate([np.zeros((additional_motion_seq * int(self.cfg.model.audio_sr / self.cfg.model.pose_fps))),audio], axis=0)
         audio = torch.from_numpy(audio).to(self.device).unsqueeze(0)
@@ -343,6 +353,7 @@ class MotionGenLightningModule(LightningModule):
             audio_other = torch.from_numpy(audio_other).to(self.device).unsqueeze(0)
         else:
             audio_other = torch.zeros_like(audio).to(self.device)
+        audio_prepare_done = time.perf_counter()
 
         audio = audio.float()
         audio_other = audio_other.float()
@@ -352,6 +363,7 @@ class MotionGenLightningModule(LightningModule):
         except:
             motion_latent = np.load(test_file["motion_self_path"], allow_pickle=True)["random_data"]
         motion_latent = torch.from_numpy(motion_latent).to(self.device).unsqueeze(0)
+        latent_load_done = time.perf_counter()
         t = audio.shape[1] // int(self.cfg.model.audio_sr / self.cfg.model.pose_fps)
         motion_latent_in = motion_latent[:,0:1,:].repeat(1,t,1)
         style_motion = None
@@ -366,6 +378,7 @@ class MotionGenLightningModule(LightningModule):
                 num_inference_steps = self.cfg.validation.denoising_steps,
                 )
             motion_latent_pred = motion_latent_pred[:, additional_motion_seq:]
+        model_done = time.perf_counter()
 
         if calculate_loss:
             minimum_length = min(t, motion_latent.shape[1],motion_latent_pred.shape[1])
@@ -379,25 +392,41 @@ class MotionGenLightningModule(LightningModule):
             audio_path=test_file["audio_path"],
             ref_img_path=ref_img_path,
             video_id=test_file["video_id"])
+        save_done = time.perf_counter()
+        rank_zero_info(
+            "[profile] motion_inference "
+            f"video_id={test_file['video_id']} frames={motion_latent_pred.shape[1]} "
+            f"audio_load={audio_load_done - infer_start:.3f}s "
+            f"audio_prepare={audio_prepare_done - audio_load_done:.3f}s "
+            f"latent_load={latent_load_done - audio_prepare_done:.3f}s "
+            f"model_forward={model_done - latent_load_done:.3f}s "
+            f"save_npz={save_done - model_done:.3f}s "
+            f"total={save_done - infer_start:.3f}s"
+        )
         return motion_latent_pred, test_loss, total_length
 
     def _render_and_evaluate(self, save_path, save_video_dir, metrics, dataset_type):
+        render_start = time.perf_counter()
         
         current_path = os.getcwd()
         cmd_vis = (
             f"cd {self.cfg.tools_path}/tools/visualization_0416/ && "
-            f"python latent_to_video.py "
+            f"{sys.executable} latent_to_video.py "
             f"--save_fps {self.cfg.model.pose_fps} --npz_dir {save_path} "
             f"--save_dir {save_video_dir} --version '0506' "
             f"&& cd {current_path}"
         )
         rank_zero_info(f"Running command: {cmd_vis}")
         os.system(cmd_vis)
+        render_done = time.perf_counter()
+        rank_zero_info(f"[profile] render dataset_type={dataset_type} total={render_done - render_start:.3f}s")
 
         if self.cfg.model.eval_metrics:
-            cmd_eval = f"cd {self.cfg.tools_path}/tools/evaluation_video && python eval_all_in_one.py --video_pred_path {save_video_dir} --metrics lipsync var --verbose"
+            eval_start = time.perf_counter()
+            cmd_eval = f"cd {self.cfg.tools_path}/tools/evaluation_video && {sys.executable} eval_all_in_one.py --video_pred_path {save_video_dir} --metrics lipsync var --verbose"
             rank_zero_info(f"Running command: {cmd_eval}")
             os.system(cmd_eval)
+            rank_zero_info(f"[profile] eval dataset_type={dataset_type} total={time.perf_counter() - eval_start:.3f}s")
         
         text_path = os.path.join(save_video_dir, "metrics.txt")
         try: 
@@ -431,14 +460,14 @@ class MotionGenLightningModule(LightningModule):
             ori_img_abs = os.path.abspath(ori_img_path)
             print(masked_img_path, ori_img_path)
             if not os.path.exists(masked_img_path) and os.path.exists(ori_img_path):
-                cmd_mask = f"cd {self.cfg.tools_path}/tools/visualization_0416 && python img_to_mask.py --image_path {ori_img_abs} --save_path {ori_img_abs} --crop True --union_bbox_scale 1.6 && cd {current_path}"
+                cmd_mask = f"cd {self.cfg.tools_path}/tools/visualization_0416 && {sys.executable} img_to_mask.py --image_path {ori_img_abs} --save_path {ori_img_abs} --crop True --union_bbox_scale 1.6 && cd {current_path}"
                 rank_zero_info(f"Running command: {cmd_mask}")
                 os.system(cmd_mask)
 
             ori_img_path = ori_img_path.replace(".png", "_resize.png")
             ori_resize_abs = os.path.abspath(ori_img_path)
             latent_path_abs = os.path.abspath(latent_path)
-            cmd_latent = f"cd {self.cfg.tools_path}/tools/visualization_0416 && python img_to_latent.py --mask_image_path {ori_resize_abs} --save_npz_path {latent_path_abs} --version {self.cfg.model.version} && cd {current_path}"
+            cmd_latent = f"cd {self.cfg.tools_path}/tools/visualization_0416 && {sys.executable} img_to_latent.py --mask_image_path {ori_resize_abs} --save_npz_path {latent_path_abs} --version {self.cfg.model.version} && cd {current_path}"
             rank_zero_info(f"Running command: {cmd_latent}")
             os.system(cmd_latent)
         else:

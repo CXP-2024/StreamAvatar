@@ -22,7 +22,14 @@ from PIL import Image
 import torchvision.transforms as T
 from omegaconf import OmegaConf
 from diffusers import FlowMatchEulerDiscreteScheduler
-from torch_ema import ExponentialMovingAverage
+
+from train_distill import load_teacher
+from train_blockwise_distill import (
+    blockwise_fm_rollout,
+    blockwise_rollout,
+    build_blockwise_student,
+    extract_audio_features,
+)
 
 # ────────────────────────────────────────────────────────────────────────────
 # Path setup
@@ -35,15 +42,9 @@ VIS_MODEL_DIR = os.path.join(VIS_DIR, "utils", "model_0506")
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Import project-level helpers immediately (before VIS paths pollute sys.path)
+# Import visualization helpers via explicit module paths so the project-level
+# utils.py and VIS_DIR utils/ package do not shadow each other.
 import importlib.util as _ilu
-
-_spec = _ilu.spec_from_file_location("project_utils", os.path.join(PROJECT_ROOT, "utils.py"))
-_project_utils = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_project_utils)
-
-instantiate_motion_gen = _project_utils.instantiate_motion_gen
-Config = _project_utils.Config
 
 # 2) Add VIS_DIR to sys.path (for utils.face_detector etc.)
 #    Do NOT add VIS_MODEL_DIR directly – it has its own `model/` package that
@@ -63,80 +64,60 @@ if _vis_model_dir_model not in _model_pkg.__path__:
 # ────────────────────────────────────────────────────────────────────────────
 # Global model holders (lazy-loaded)
 # ────────────────────────────────────────────────────────────────────────────
-_dystream_model = None
-_dystream_cfg = None
-_dystream_ema = None
-_noise_scheduler = None
 _vis_ctx = None  # visualization context: transform, face_encoder, flow_estimator, face_generator
 _motion_encoder = None  # for extracting motion latent from image
 _face_detector = None
+_arod_teacher = None
+_arod_student = None
+_arod_cfg = None
+_arod_checkpoint_path = None
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ────────────────────────────────────────────────────────────────────────────
-# Model Loading
-# ────────────────────────────────────────────────────────────────────────────
+APP_MODEL_NAME = "AROD"
+DEFAULT_AROD_CONFIG = os.path.join(
+    PROJECT_ROOT,
+    "configs",
+    "distill",
+    "blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k.yaml",
+)
+DEFAULT_DEMO_IMAGE = os.path.join(PROJECT_ROOT, "img_files", "person1.png")
+DEFAULT_DEMO_AUDIO = os.path.join(PROJECT_ROOT, "wav_files", "test_audio_60s.wav")
 
-def load_dystream_model():
-    """Load the DyStream motion generation model."""
-    global _dystream_model, _dystream_cfg, _dystream_ema, _noise_scheduler
+def resolve_arod_checkpoint(cfg):
+    candidates = [
+        os.path.join(cfg.output_dir, "blockwise_latest.pt"),
+        os.path.join(cfg.output_dir, "blockwise_best_val.pt"),
+        os.path.join(cfg.output_dir, "blockwise_best.pt"),
+        os.path.join(cfg.output_dir, "blockwise_last.pt"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    raise FileNotFoundError(f"No AROD checkpoint found. Tried: {candidates}")
 
-    if _dystream_model is not None:
-        return
 
-    print("[DyStream] Loading motion generation model...")
-    config_path = os.path.join(PROJECT_ROOT, "configs", "motion_gen", "sample.yaml")
+def load_arod_models(config_path=DEFAULT_AROD_CONFIG):
+    """Load the AROD student and frozen DyStream teacher audio encoders."""
+    global _arod_teacher, _arod_student, _arod_cfg, _arod_checkpoint_path
 
-    # Build config with overrides (same as run.sh)
-    override_args = {
-        "exp_name": "gradio_demo",
-        "model.module_name": "model.motion_generation.motion_gen_gpt_flowmatching_addaudio_linear_twowavencoder",
-        "resume_ckpt": os.path.join(PROJECT_ROOT, "checkpoints", "last.ckpt"),
-    }
-    _dystream_cfg = Config(config_path, override_args)
+    if _arod_teacher is not None and _arod_student is not None:
+        return _arod_teacher, _arod_student, _arod_cfg, _arod_checkpoint_path
 
-    # Instantiate model
-    _dystream_model = instantiate_motion_gen(
-        module_name=_dystream_cfg.model.module_name,
-        class_name=_dystream_cfg.model.class_name,
-        cfg=_dystream_cfg.model,
-        hfstyle=False,
-    )
+    print("[AROD] Loading config and checkpoint...")
+    _arod_cfg = OmegaConf.load(config_path)
+    _arod_checkpoint_path = resolve_arod_checkpoint(_arod_cfg)
 
-    # Load checkpoint
-    ckpt_path = _dystream_cfg.resume_ckpt
-    if os.path.exists(ckpt_path):
-        print(f"[DyStream] Loading checkpoint from {ckpt_path}")
-        checkpoint = torch.load(ckpt_path, map_location="cpu")
-        # The checkpoint stores state_dict at top level (from LightningModule)
-        state_dict = checkpoint.get("state_dict", checkpoint)
-        # Strip "model." prefix if from Lightning checkpoint
-        new_state_dict = {}
-        for k, v in state_dict.items():
-            if k.startswith("model."):
-                new_state_dict[k[len("model."):]] = v
-            else:
-                new_state_dict[k] = v
-        _dystream_model.load_state_dict(new_state_dict, strict=False)
-        print("[DyStream] Checkpoint loaded successfully.")
+    _arod_teacher = load_teacher(_arod_cfg).to(DEVICE).eval()
+    _arod_student = build_blockwise_student(_arod_cfg).to(DEVICE)
+    checkpoint = torch.load(_arod_checkpoint_path, map_location="cpu")
+    _arod_student.load_state_dict(checkpoint["student"], strict=True)
+    _arod_student.eval()
+    for param in _arod_student.parameters():
+        param.requires_grad = False
 
-        # Load EMA if available
-        _dystream_ema = ExponentialMovingAverage(
-            _dystream_model.parameters(), decay=_dystream_cfg.model.ema_decay
-        )
-        if "ema_state" in checkpoint:
-            _dystream_ema.load_state_dict(checkpoint["ema_state"])
-            print("[DyStream] EMA state loaded.")
-    else:
-        print(f"[DyStream] WARNING: Checkpoint not found at {ckpt_path}")
-
-    _dystream_model.eval().to(DEVICE)
-
-    # Noise scheduler
-    _noise_scheduler = FlowMatchEulerDiscreteScheduler(
-        **OmegaConf.to_container(_dystream_cfg.noise_scheduler_kwargs, resolve=True)
-    )
-    print("[DyStream] Motion generation model ready.")
+    print(f"[AROD] Student ready: {_arod_checkpoint_path}")
+    return _arod_teacher, _arod_student, _arod_cfg, _arod_checkpoint_path
 
 
 def load_visualization_model():
@@ -446,12 +427,6 @@ def save_video_with_audio(video_frames, audio_path, output_path, fps=25):
 def run_inference(
     image_input,
     speaker_audio_path,
-    listener_audio_path,
-    denoising_steps,
-    cfg_audio,
-    cfg_audio_other,
-    cfg_anchor,
-    cfg_all,
     progress=gr.Progress(track_tqdm=True),
     precomputed_npz_path=None,
     precomputed_ref_img_path=None,
@@ -460,7 +435,7 @@ def run_inference(
     """
     Full inference pipeline:
     1. Process image -> motion latent  (or use precomputed)
-    2. Run DyStream inference
+    2. Run AROD student motion inference
     3. Convert motion latents to video
     """
     if image_input is None and precomputed_npz_path is None:
@@ -470,7 +445,7 @@ def run_inference(
 
     # ── Step 1: Load all models ──────────────────────────────────────────
     progress(0.0, desc="Loading models...")
-    load_dystream_model()
+    teacher, student, cfg, checkpoint_path = load_arod_models()
     load_visualization_model()
 
     # ── Step 2: Get motion latent & reference image ──────────────────────
@@ -501,27 +476,17 @@ def run_inference(
 
     # ── Step 3: Prepare audio ────────────────────────────────────────────
     progress(0.2, desc="Processing audio...")
-    audio_sr = int(OmegaConf.select(_dystream_cfg.config, "model.audio_sr", default=16000))
-    pose_fps = int(OmegaConf.select(_dystream_cfg.config, "model.pose_fps", default=25))
+    audio_sr = int(cfg.model.audio_sr)
+    pose_fps = int(cfg.model.pose_fps)
 
     audio_self, _ = librosa.load(speaker_audio_path, sr=audio_sr)
-    additional_motion_seq = _dystream_model.inpainting_length
+    additional_motion_seq = int(cfg.model.cbh_window_length) - 2
     audio_self = np.concatenate([
         np.zeros(additional_motion_seq * int(audio_sr / pose_fps)),
         audio_self,
     ], axis=0)
     audio_tensor = torch.from_numpy(audio_self).float().unsqueeze(0).to(DEVICE)
-
-    # Listener audio (optional)
-    if listener_audio_path is not None and os.path.exists(listener_audio_path):
-        audio_other, _ = librosa.load(listener_audio_path, sr=audio_sr)
-        audio_other = np.concatenate([
-            np.zeros(additional_motion_seq * int(audio_sr / pose_fps)),
-            audio_other,
-        ], axis=0)
-        audio_other_tensor = torch.from_numpy(audio_other).float().unsqueeze(0).to(DEVICE)
-    else:
-        audio_other_tensor = torch.zeros_like(audio_tensor).to(DEVICE)
+    audio_other_tensor = torch.zeros_like(audio_tensor).to(DEVICE)
 
     # ── Step 4: Prepare motion latent input ──────────────────────────────
     #    Matches main.py _inference_one_file exactly:
@@ -535,38 +500,55 @@ def run_inference(
     if motion_latent.dim() == 2:
         motion_latent = motion_latent.unsqueeze(0)  # [1, N, 512]
     # Take first frame only (same as main.py: motion_latent[:,0:1,:])
-    t = audio_tensor.shape[1] // int(audio_sr / pose_fps)
-    motion_latent_in = motion_latent[:, 0:1, :].repeat(1, t, 1)  # [1, T, 512]
+    total_frames = audio_tensor.shape[1] // int(audio_sr / pose_fps)
+    target_frames = max(total_frames - additional_motion_seq, 1)
+    anchor = motion_latent[:, 0:1, :]
 
-    # ── Step 5: Override CFG parameters ──────────────────────────────────
-    _dystream_model.cfg_audio = cfg_audio
-    _dystream_model.cfg_audio_other = cfg_audio_other
-    _dystream_model.cfg_anchor = cfg_anchor
-    _dystream_model.cfg_all = cfg_all
+    # ── Step 5: Extract audio features ───────────────────────────────────
+    progress(0.4, desc="Extracting audio features...")
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    with torch.inference_mode():
+        feat_self, feat_other = extract_audio_features(teacher, audio_tensor, audio_other_tensor)
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
+    audio_feature_time = time.perf_counter() - t0
 
-    # ── Step 6: Run DyStream inference ───────────────────────────────────
-    progress(0.4, desc="Generating motion sequence...")
-    denoising_steps = int(denoising_steps)
-
-    if _dystream_ema is not None:
-        _dystream_ema.to(DEVICE)
-        ctx = _dystream_ema.average_parameters(_dystream_model.parameters())
-    else:
-        from contextlib import nullcontext
-        ctx = nullcontext()
-
-    with ctx:
-        motion_latent_pred = _dystream_model.inference(
-            audio_tensor,
-            audio_other=audio_other_tensor,
-            init_motion=motion_latent_in,
-            cond_motion=motion_latent_in,
-            anchor_motion=motion_latent[:, 0:1, :],
-            noise_scheduler=_noise_scheduler,
-            num_inference_steps=denoising_steps,
-        )
-        # Remove the inpainting prefix
-        motion_latent_pred = motion_latent_pred[:, additional_motion_seq:]
+    # ── Step 6: Run AROD one-step denoising rollout ─────────────────────
+    progress(0.55, desc="Generating motion with AROD...")
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    with torch.inference_mode():
+        if cfg.student.get("architecture", "additive") == "cross_fm":
+            scheduler = FlowMatchEulerDiscreteScheduler(**cfg.noise_scheduler)
+            motion_latent_pred = blockwise_fm_rollout(
+                student,
+                feat_self,
+                feat_other,
+                anchor,
+                target_frames=target_frames,
+                inpaint_len=additional_motion_seq,
+                cfg=cfg,
+                noise_scheduler=scheduler,
+                teacher_seq=None,
+                seed=int(cfg.seed),
+            )
+        else:
+            motion_latent_pred = blockwise_rollout(
+                student,
+                feat_self,
+                feat_other,
+                anchor,
+                target_frames=target_frames,
+                inpaint_len=additional_motion_seq,
+                cfg=cfg,
+            )
+    motion_latent_pred = motion_latent_pred.float()
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
+    student_time = time.perf_counter() - t0
 
     progress(0.7, desc="Rendering video frames...")
 
@@ -585,22 +567,7 @@ def run_inference(
 
     final_audio = video_audio_path
     if final_audio is None or not os.path.exists(final_audio):
-        if listener_audio_path is not None and os.path.exists(listener_audio_path):
-            # Mix speaker + listener audio for the video soundtrack
-            try:
-                import soundfile as sf
-                sp, sr1 = librosa.load(speaker_audio_path, sr=None)
-                ls, sr2 = librosa.load(listener_audio_path, sr=sr1)
-                min_len = min(len(sp), len(ls))
-                mixed = sp[:min_len] + ls[:min_len]
-                mixed_path = os.path.join(output_dir, "mixed_audio.wav")
-                sf.write(mixed_path, mixed, sr1)
-                final_audio = mixed_path
-            except Exception as e:
-                print(f"[Warning] Failed to mix audio: {e}, using speaker audio only.")
-                final_audio = speaker_audio_path
-        else:
-            final_audio = speaker_audio_path
+        final_audio = speaker_audio_path
 
     save_video_with_audio(video_frames, final_audio, output_path, fps=pose_fps)
 
@@ -609,12 +576,16 @@ def run_inference(
     num_frames = motion_latent_pred.shape[1]
     duration = num_frames / pose_fps
     info_text = (
+        f"Model: AROD student\n"
         f"Frames: {num_frames}\n"
         f"Duration: {duration:.2f}s\n"
         f"FPS: {pose_fps}\n"
-        f"Denoising Steps: {denoising_steps}\n"
-        f"CFG (audio): {cfg_audio}, CFG (listener): {cfg_audio_other}\n"
-        f"CFG (anchor): {cfg_anchor}, CFG (all): {cfg_all}"
+        f"Block Frames: {cfg.student.block_frames}\n"
+        f"History Frames: {cfg.student.history_frames}\n"
+        f"Audio Feature Time: {audio_feature_time:.3f}s\n"
+        f"Student Motion Time: {student_time:.3f}s\n"
+        f"Student Motion RTF: {student_time / max(duration, 1e-6):.4f}\n"
+        f"Checkpoint: {checkpoint_path}"
     )
 
     return output_path, resized_pil, masked_pil, info_text
@@ -625,39 +596,30 @@ def run_inference(
 # ────────────────────────────────────────────────────────────────────────────
 
 def update_sample_preview(sample_choice):
-    """Return preview assets (face image, speaker audio, listener audio) for the selected sample."""
-    if sample_choice == "Sample 1: Dyadic Conversation":
-        image_path = os.path.join(PROJECT_ROOT, "img_files", "3.png")
-        speaker_audio = os.path.join(PROJECT_ROOT, "wav_files", "_sgIH81kj78-Scene-005+audio_v3_1.wav")
-        listener_audio = os.path.join(PROJECT_ROOT, "wav_files", "_sgIH81kj78-Scene-005+audio_v3_0.wav")
+    """Return preview assets for the selected sample."""
+    if sample_choice == "Sample 1: 60s Person1":
+        image_path = DEFAULT_DEMO_IMAGE
+        speaker_audio = DEFAULT_DEMO_AUDIO
     else:
         image_path = os.path.join(PROJECT_ROOT, "img_files", "11.png")
         speaker_audio = os.path.join(PROJECT_ROOT, "wav_files", "11.wav")
-        listener_audio = None
 
-    return image_path, speaker_audio, listener_audio
+    return image_path, speaker_audio
 
 
-def run_sample_demo(sample_choice, denoising_steps, cfg_audio, cfg_audio_other, cfg_anchor, cfg_all, progress=gr.Progress(track_tqdm=True)):
+def run_sample_demo(sample_choice, progress=gr.Progress(track_tqdm=True)):
     """Run inference on pre-loaded sample data using the full pipeline from raw image."""
-    if sample_choice == "Sample 1: Dyadic Conversation":
-        image_path = os.path.join(PROJECT_ROOT, "img_files", "3.png")
-        speaker_audio = os.path.join(PROJECT_ROOT, "wav_files", "_sgIH81kj78-Scene-005+audio_v3_1.wav")
-        listener_audio = os.path.join(PROJECT_ROOT, "wav_files", "_sgIH81kj78-Scene-005+audio_v3_0.wav")
-        # Full combined audio for the final video (same as main.py uses audio_path)
-        full_audio = os.path.join(PROJECT_ROOT, "wav_files", "_sgIH81kj78-Scene-005+audio_full.wav")
+    if sample_choice == "Sample 1: 60s Person1":
+        image_path = DEFAULT_DEMO_IMAGE
+        speaker_audio = DEFAULT_DEMO_AUDIO
     else:
         image_path = os.path.join(PROJECT_ROOT, "img_files", "11.png")
         speaker_audio = os.path.join(PROJECT_ROOT, "wav_files", "11.wav")
-        listener_audio = None
-        full_audio = None
 
     image_pil = Image.open(image_path).convert("RGB")
     return run_inference(
-        image_pil, speaker_audio, listener_audio,
-        denoising_steps, cfg_audio, cfg_audio_other, cfg_anchor, cfg_all,
+        image_pil, speaker_audio,
         progress=progress,
-        video_audio_path=full_audio,
     )
 
 
@@ -686,16 +648,16 @@ CUSTOM_CSS = """
 
 def build_ui():
     with gr.Blocks(
-        title="DyStream - Streaming Dyadic Talking Heads Generation via FlowMatching-based Autoregressive Model",
+        title="StreamAvatar AROD Student Demo",
     ) as demo:
         # ── Header ──
         gr.Markdown(
-            "# DyStream: Streaming Dyadic Talking Heads Generation via FlowMatching-based Autoregressive Model",
+            "# StreamAvatar AROD Student Demo",
             elem_classes=["main-title"],
         )
         gr.Markdown(
-            "Upload a reference face image and audio to generate a talking head video. "
-            "Supports both single-speaker and dyadic conversation modes.",
+            "Generate portrait motion with AROD: autoregressive one-step denoising. "
+            "The app uses the frozen DyStream teacher only for audio features and renders the AROD student motion.",
             elem_classes=["subtitle"],
         )
 
@@ -709,40 +671,15 @@ def build_ui():
                     with gr.Column(scale=1):
                         sample_choice = gr.Radio(
                             choices=[
-                                "Sample 1: Dyadic Conversation",
+                                "Sample 1: 60s Person1",
                                 "Sample 2: Speaker Only",
                             ],
-                            value="Sample 1: Dyadic Conversation",
+                            value="Sample 1: 60s Person1",
                             label="Select Sample",
                         )
 
-                        gr.Markdown("### Inference Parameters")
-                        with gr.Group(elem_classes=["param-group"]):
-                            sample_denoising_steps = gr.Slider(
-                                minimum=1, maximum=20, value=5, step=1,
-                                label="Denoising Steps",
-                            )
-                            with gr.Row():
-                                sample_cfg_audio = gr.Slider(
-                                    minimum=0, maximum=3.0, value=0.5, step=0.1,
-                                    label="CFG Audio",
-                                )
-                                sample_cfg_audio_other = gr.Slider(
-                                    minimum=0, maximum=3.0, value=0.5, step=0.1,
-                                    label="CFG Listener",
-                                )
-                            with gr.Row():
-                                sample_cfg_anchor = gr.Slider(
-                                    minimum=0, maximum=3.0, value=0.0, step=0.1,
-                                    label="CFG Anchor",
-                                )
-                                sample_cfg_all = gr.Slider(
-                                    minimum=0, maximum=3.0, value=1.0, step=0.1,
-                                    label="CFG All",
-                                )
-
                         sample_btn = gr.Button(
-                            "Run Sample",
+                            "Run AROD Sample",
                             variant="primary",
                             size="lg",
                         )
@@ -750,19 +687,14 @@ def build_ui():
                         # Dynamic preview of selected sample inputs
                         gr.Markdown("### Selected Sample Inputs")
                         sample_preview_image = gr.Image(
-                            value=os.path.join(PROJECT_ROOT, "img_files", "3.png"),
+                            value=DEFAULT_DEMO_IMAGE,
                             label="Reference Face Image",
                             height=200,
                             interactive=False,
                         )
                         sample_preview_speaker_audio = gr.Audio(
-                            value=os.path.join(PROJECT_ROOT, "wav_files", "_sgIH81kj78-Scene-005+audio_v3_1.wav"),
-                            label="Speaker Audio",
-                            interactive=False,
-                        )
-                        sample_preview_listener_audio = gr.Audio(
-                            value=os.path.join(PROJECT_ROOT, "wav_files", "_sgIH81kj78-Scene-005+audio_v3_0.wav"),
-                            label="Listener Audio",
+                            value=DEFAULT_DEMO_AUDIO,
+                            label="Driving Audio",
                             interactive=False,
                         )
 
@@ -789,10 +721,7 @@ def build_ui():
 
                 sample_btn.click(
                     fn=run_sample_demo,
-                    inputs=[
-                        sample_choice, sample_denoising_steps,
-                        sample_cfg_audio, sample_cfg_audio_other, sample_cfg_anchor, sample_cfg_all,
-                    ],
+                    inputs=[sample_choice],
                     outputs=[sample_output_video, sample_output_resized, sample_output_masked, sample_output_info],
                 )
 
@@ -800,7 +729,7 @@ def build_ui():
                 sample_choice.change(
                     fn=update_sample_preview,
                     inputs=[sample_choice],
-                    outputs=[sample_preview_image, sample_preview_speaker_audio, sample_preview_listener_audio],
+                    outputs=[sample_preview_image, sample_preview_speaker_audio],
                 )
 
             # ══════════════════════════════════════════════════════════════
@@ -817,41 +746,12 @@ def build_ui():
                             height=300,
                         )
                         speaker_audio = gr.Audio(
-                            label="Speaker Audio (required)",
+                            label="Driving Audio (required)",
                             type="filepath",
                         )
-                        listener_audio = gr.Audio(
-                            label="Listener Audio (optional, for dyadic mode)",
-                            type="filepath",
-                        )
-
-                        gr.Markdown("### Inference Parameters")
-                        with gr.Group(elem_classes=["param-group"]):
-                            denoising_steps = gr.Slider(
-                                minimum=1, maximum=20, value=5, step=1,
-                                label="Denoising Steps",
-                            )
-                            with gr.Row():
-                                cfg_audio = gr.Slider(
-                                    minimum=0, maximum=3.0, value=0.5, step=0.1,
-                                    label="CFG Audio",
-                                )
-                                cfg_audio_other = gr.Slider(
-                                    minimum=0, maximum=3.0, value=0.5, step=0.1,
-                                    label="CFG Listener",
-                                )
-                            with gr.Row():
-                                cfg_anchor = gr.Slider(
-                                    minimum=0, maximum=3.0, value=0.0, step=0.1,
-                                    label="CFG Anchor",
-                                )
-                                cfg_all = gr.Slider(
-                                    minimum=0, maximum=3.0, value=1.0, step=0.1,
-                                    label="CFG All",
-                                )
 
                         generate_btn = gr.Button(
-                            "Generate Video",
+                            "Generate with AROD",
                             variant="primary",
                             size="lg",
                         )
@@ -880,10 +780,7 @@ def build_ui():
 
                 generate_btn.click(
                     fn=run_inference,
-                    inputs=[
-                        image_input, speaker_audio, listener_audio,
-                        denoising_steps, cfg_audio, cfg_audio_other, cfg_anchor, cfg_all,
-                    ],
+                    inputs=[image_input, speaker_audio],
                     outputs=[output_video, output_resized, output_masked, output_info],
                 )
 
@@ -892,25 +789,15 @@ def build_ui():
             # ══════════════════════════════════════════════════════════════
             with gr.TabItem("About"):
                 gr.Markdown("""
-## DyStream: Streaming Dyadic Talking Heads Generation via FlowMatching-based Autoregressive Model
+## StreamAvatar AROD
 
 ### Introduction
-DyStream is a flow matching-based autoregressive model for generating talking head videos from dyadic audio in realtime.
+AROD means Autoregressive One-step Denoising. It keeps blockwise autoregressive
+motion rollout, but replaces the DyStream teacher's AR+FM generation path with a
+single denoising prediction for each future motion block.
 
-For more details, please refer to the [website](https://robinwitch.github.io/DyStream-Page) and [paper](https://arxiv.org/pdf/2512.24408).
-
-### Supported Modes
-- **Speaker Only**: Generates talking head motion using only the speaker's audio.
-- **Dyadic Conversation**: Uses both speaker and listener audio to generate more natural conversational motion.
-
-### Parameters
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| Denoising Steps | Flow matching sampling steps | 5 |
-| CFG Audio | Guidance strength for speaker audio | 0.5 |
-| CFG Listener | Guidance strength for listener audio | 0.5 |
-| CFG Anchor | Guidance strength for anchor motion | 0.0 |
-| CFG All | Global guidance strength | 1.0 |
+The app runs:
+reference image + audio -> frozen DyStream audio features -> AROD motion student -> frozen renderer.
                 """)
 
     return demo
@@ -921,6 +808,13 @@ For more details, please refer to the [website](https://robinwitch.github.io/DyS
 # ────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Launch the StreamAvatar AROD Gradio demo.")
+    parser.add_argument("--host", default="0.0.0.0", help="Host interface for the Gradio server.")
+    parser.add_argument("--port", type=int, default=7860, help="Port for the Gradio server.")
+    args = parser.parse_args()
+
     # Ensure localhost is not routed through proxy
     import os as _os
     for _var in ("no_proxy", "NO_PROXY"):
@@ -931,8 +825,8 @@ if __name__ == "__main__":
     demo = build_ui()
     demo.queue()
     demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
+        server_name=args.host,
+        server_port=args.port,
         share=False,
         show_error=True,
         css=CUSTOM_CSS,

@@ -1,0 +1,124 @@
+# Mixed LRS3 pretrain GT-cache + frozen-teacher training.
+# Uses the currently available 35,868 pretrain cache items:
+#   - 35,356 train clips
+#   - 512 validation clips
+# Per-step source mix:
+#   - 90% frozen teacher target
+#   - 10% pretrain GT cache target
+
+seed: 123
+
+checkpoint_path: checkpoints/last.ckpt
+wav2vec_path: pretrained_model/wav2vec2-base-960h
+lrs3_trainval_root: /mnt/pfs/group-jt/zihan.guo/droid/LRS3/lrs3/trainval/trainval
+lrs3_pretrain_root: /mnt/pfs/group-jt/zihan.guo/droid/LRS3/lrs3/pretrain/pretrain
+output_dir: outputs/blockwise_stream_distill_cross_fm_mixed_pretrain_35k_teacher90
+
+model:
+  module_name: model.motion_generation.motion_gen_gpt_flowmatching_addaudio_linear_twowavencoder
+  class_name: Audio2FaceGPT
+  pose_fps: 25
+  audio_sr: 16000
+  audio_fps: 16000
+  wav2vec_layer: 8
+  cbh_window_length: 96
+  vae_codebook_size: 512
+  seed: 123
+  prev_audio_frames: 32
+  ema_decay: 0.999
+  cfg_audio: 0.5
+  cfg_audio_other: 0.5
+  cfg_anchor: 0
+  cfg_all: 1.0
+  cfg_fusion: 2.0
+  cfg_audio_anchor: 1.0
+  drop_audio: 0.1
+  drop_audio_other: 0.1
+  drop_anchor: 0.1
+  drop_gpt: 0.1
+  drop_style: 0.3
+  drop_other: 0.0
+  drop_self: 0.0
+  drop_fusion: 0.1
+  drop_prev_motion: 0.0
+  cfg_gpt: 1.0
+  cfg_style: 1.0
+  cfg_prev_motion: 0.0
+  sync_only: true
+  use_init_motion: false
+  strength: 1.0
+  window_size: 8
+  total_iter: 600000
+  eval_metrics: false
+  version: '0506'
+  two_step: false
+  infer_32: false
+  qk_norm: rms_norm_across_heads
+  eps: 1.0e-06
+  cross_attn_norm: true
+  added_kv_proj_dim: null
+
+teacher:
+  denoising_steps: 1
+  use_ema: true
+  guidance_mode: all_only
+
+student:
+  architecture: cross_fm
+  block_frames: 2
+  history_frames: 32
+  hidden_dim: 512
+  layers: 6
+  heads: 8
+  dropout: 0.1
+  detach_between_blocks: true
+
+training:
+  batch_size: 64
+  num_epochs: 100
+  max_steps: 55300
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_steps: 100
+  grad_clip: 1.0
+  log_every: 20
+  save_every: 1000
+  save_latest_every: 100
+  save_every_epoch: true
+  num_workers: 8
+  fp16: true
+  drop_last: false
+  resume_from: null
+  resume_metrics: null
+
+validation:
+  enabled: true
+  manifest_path: data_cache/lrs3_dystream_motion_volc/manifest_pretrain_35k_val512.json
+  batch_size: 64
+  num_workers: 4
+  eval_every_steps: 276
+  max_batches: null
+
+data:
+  target_source: mixed
+  manifest_path: data_cache/lrs3_dystream_motion_volc/manifest_pretrain_35k_train.json
+  max_clips: null
+  split_mode: pretrain
+  audio_duration_sec: 3.0
+  anchor_std: 0.35
+
+  teacher_mix_prob: 0.9
+  teacher_batch_size: 64
+  teacher_num_workers: 4
+  teacher_max_clips: null
+
+loss:
+  velocity_weight: 1.5
+  acceleration_weight: 0.2
+  boundary_weight: 0.3
+  delta_weight: 0.0
+
+noise_scheduler:
+  num_train_timesteps: 1000
+  shift: 1
+  use_karras_sigmas: false
