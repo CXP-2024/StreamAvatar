@@ -1,0 +1,154 @@
+# 此配置文件主要用于 img_to_mask.py 获取 face detection 相关参数
+debug: false
+seed: 39
+root_name: audio_head_animator
+exp_name: ${root_name}/inference
+mode: train
+n_epochs: null
+cache_dir: cache
+ckpt_dir: ${exp_name}/ckpt
+resume_ckpt: null
+
+only_resume_state_dict: False
+pretrained_ckpt: null
+
+model:
+  module_name: model.head_animation.head_animator
+  class_name: HeadAnimatorModule
+  pretrained_ckpt: ${pretrained_ckpt}
+  using_hybrid_mask: True
+  output_dir: ${exp_name}
+
+  face_encoder:
+    module_name: model.head_animation.LIA_3d.face_encoder
+    class_name: FaceEncoder
+    image_size: 512
+    image_channel: 3
+    block_expansion: 64
+    num_down_blocks: 3
+    max_features: 512
+    reshape_channel: 32
+    reshape_depth: 16
+    num_resblocks: 6
+
+  motion_encoder:
+    module_name: model.head_animation.LIA_3d.motion_encoder
+    class_name: MotionEncoder
+    latent_dim: 512
+    size: ${model.face_encoder.image_size}
+
+  flow_estimator:
+    module_name: model.head_animation.LIA_3d.flow_estimator
+    class_name: FlowEstimator
+    latent_dim: ${model.motion_encoder.latent_dim}
+    motion_space: 64
+
+  face_generator:
+    module_name: model.head_animation.LIA_3d.face_generator
+    class_name: FaceGenerator
+    size:  ${model.face_encoder.image_size}
+    latent_dim: ${model.motion_encoder.latent_dim}
+    outputsize: ${data.train_width}
+    reshape_channel: ${model.face_encoder.reshape_channel}
+    group_norm_channel: 32
+    flag_estimate_occlusion_map: True
+
+  discriminator:
+    module_name: model.head_animation.LIA.discriminator
+    class_name: Discriminator
+    size: ${data.train_width}
+
+  vgg_loss:
+    module_name: model.head_animation.VASA1.loss
+    class_name: VGGLoss
+
+loss:
+  l_w_recon: 1
+  l_w_face_l1: 0
+  l_w_vgg: 2
+  l_w_gan: 0.2
+  l_w_face: 0
+  l_w_headpose: 0
+  l_w_gaze: 0
+  l_w_foreground: 0
+  l_w_local: 0
+
+optimizer:
+  lr: 0.0001
+  discriminator_lr: 0.002
+  warmup_steps: 0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-08
+  weight_decay: 0.0
+  g_reg_every: 4
+  d_reg_every: 16
+
+logger:
+  neptune_project: null
+  neptune_api_token: null
+  wandb:
+    enabled: false
+    entity: null
+    project: "real-time"
+
+callbacks:
+  - module_name: lightning.pytorch.callbacks
+    class_name: ModelCheckpoint
+    dirpath: ${ckpt_dir}
+    every_n_train_steps: 2000
+    save_top_k: -1
+
+trainer:
+  accelerator: gpu
+  log_every_n_steps: 1
+  val_check_interval: 100000
+
+data:
+  debug: False
+  train_bs: 12
+  accumulate_grad_batches: 1
+  n_sample_frames: 1
+  past_n: 1
+  num_workers: 8
+  ref_sample_margin: 10
+  train_width: 512
+  train_height: 512
+  union_bbox_scale: [1.2, 1.4]
+  mouth_bbox_scale: 1.5
+  eye_bbox_scale: 2.0
+  hybrid_face_mask: ${model.using_hybrid_mask}
+  flip_aug: True
+  filter_hand_videos: true
+  random_sample: False
+  dataset_file_path: []
+  cache_file_path: []
+  train_fps: 25
+  dataloader: FastVideoDatasetV2
+
+val_data:
+  train_bs: 1
+  n_sample_frames: 40
+  past_n: 2
+  num_workers: 6
+  ref_sample_margin: ${data.ref_sample_margin}
+  train_width: ${data.train_width}
+  train_height: ${data.train_height}
+  union_bbox_scale: [1.2, 1.4]
+  mouth_bbox_scale: ${data.mouth_bbox_scale}
+  eye_bbox_scale: ${data.eye_bbox_scale}
+  hybrid_face_mask: ${data.hybrid_face_mask}
+  flip_aug: False
+  filter_hand_videos: ${data.filter_hand_videos}
+  random_sample: False
+  dataset_file_path: []
+  train_fps: ${data.train_fps}
+  dataloader: ${data.dataloader}
+
+test_data:
+  height: 384
+  width: 672
+  image_paths_and_scales: []
+
+inference:
+  output_dir: inference_outputs/${exp_name}

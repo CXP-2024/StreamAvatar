@@ -2,6 +2,12 @@
 outputs*
 checkpoints*
 tools*
+!tools/
+!tools/visualization_0416/
+!tools/visualization_0416/**
+tools/visualization_0416/.cache/
+tools/visualization_0416/**/__pycache__/
+tools/pretrained_model/
 .pip_cache/
 .hf_cache/
 .venv/
@@ -13,7 +19,11 @@ results/
 img_files/*current*
 img_files/person*.png
 img_files/person*.npz
+!img_files/person1.png
+!img_files/person1.npz
 wav_files/*.wav
+!wav_files/test_audio_60s.wav
+!wav_files/test_audio_3s.wav
 data_json/*current*
 data_json/local_*
 configs/motion_gen/*current*

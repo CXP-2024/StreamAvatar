@@ -808,6 +808,13 @@ reference image + audio -> frozen DyStream audio features -> AROD motion student
 # ────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Launch the StreamAvatar AROD Gradio demo.")
+    parser.add_argument("--host", default="0.0.0.0", help="Host interface for the Gradio server.")
+    parser.add_argument("--port", type=int, default=7860, help="Port for the Gradio server.")
+    args = parser.parse_args()
+
     # Ensure localhost is not routed through proxy
     import os as _os
     for _var in ("no_proxy", "NO_PROXY"):
@@ -818,8 +825,8 @@ if __name__ == "__main__":
     demo = build_ui()
     demo.queue()
     demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
+        server_name=args.host,
+        server_port=args.port,
         share=False,
         show_error=True,
         css=CUSTOM_CSS,
