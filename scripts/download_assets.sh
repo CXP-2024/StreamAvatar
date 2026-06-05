@@ -10,6 +10,7 @@ AROD_ASSET_FILE="${AROD_ASSET_FILE:-blockwise_latest.pt}"
 AROD_GDRIVE_ID="${AROD_GDRIVE_ID:-1El-2l5GZRfrVLEl2-x6ocPyyT9ILxDJS}"
 AROD_GDOWN_PROXY="${AROD_GDOWN_PROXY:-}"
 AROD_OUTPUT_DIR="outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k"
+AROD_SHA256="${AROD_SHA256:-01893fabb842fcc8e9817a8e2530108d75932aad4f6ac4136e5c22b94702e860}"
 
 command -v huggingface-cli >/dev/null 2>&1 || {
   echo "huggingface-cli is not installed. Run: pip install huggingface-hub" >&2
@@ -62,6 +63,17 @@ Install gdown and rerun this script, or use Hugging Face:
   pip install gdown
   AROD_ASSET_REPO=<owner/repo> AROD_ASSET_FILE=blockwise_latest.pt bash scripts/download_assets.sh
 EOF
+fi
+
+if [[ -f "$AROD_OUTPUT_DIR/blockwise_latest.pt" ]]; then
+  echo "Verifying AROD checkpoint SHA256..."
+  actual_sha="$(sha256sum "$AROD_OUTPUT_DIR/blockwise_latest.pt" | awk '{print $1}')"
+  if [[ "$actual_sha" != "$AROD_SHA256" ]]; then
+    echo "AROD checkpoint checksum mismatch." >&2
+    echo "Expected: $AROD_SHA256" >&2
+    echo "Actual:   $actual_sha" >&2
+    exit 1
+  fi
 fi
 
 echo "[4/4] Asset layout:"

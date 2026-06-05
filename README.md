@@ -101,7 +101,7 @@ You can use the helper script for the public base assets:
 bash scripts/download_assets.sh
 ```
 
-By default, the script downloads Wav2Vec2, tries to fetch the original DyStream assets from `robinwitch/DyStream`, and downloads the AROD checkpoint from Google Drive with `gdown`.
+By default, the script downloads Wav2Vec2, tries to fetch the original DyStream assets from `robinwitch/DyStream`, downloads the AROD checkpoint from Google Drive with `gdown`, and verifies the AROD checkpoint SHA256.
 
 If your network needs a SOCKS proxy, pass it to `gdown`:
 
