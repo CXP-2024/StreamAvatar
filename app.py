@@ -79,7 +79,7 @@ DEFAULT_AROD_CONFIG = os.path.join(
     PROJECT_ROOT,
     "configs",
     "distill",
-    "blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml",
+    "blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k.yaml",
 )
 DEFAULT_DEMO_IMAGE = os.path.join(PROJECT_ROOT, "img_files", "person1.png")
 DEFAULT_DEMO_AUDIO = os.path.join(PROJECT_ROOT, "wav_files", "test_audio_60s.wav")

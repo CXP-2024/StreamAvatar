@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 DYSTREAM_ASSET_REPO="${DYSTREAM_ASSET_REPO:-robinwitch/DyStream}"
 AROD_ASSET_REPO="${AROD_ASSET_REPO:-}"
 AROD_ASSET_FILE="${AROD_ASSET_FILE:-blockwise_latest.pt}"
+AROD_GDRIVE_ID="${AROD_GDRIVE_ID:-1El-2l5GZRfrVLEl2-x6ocPyyT9ILxDJS}"
+AROD_GDOWN_PROXY="${AROD_GDOWN_PROXY:-}"
+AROD_OUTPUT_DIR="outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k"
 
 command -v huggingface-cli >/dev/null 2>&1 || {
   echo "huggingface-cli is not installed. Run: pip install huggingface-hub" >&2
@@ -38,21 +41,29 @@ else
 fi
 
 echo "[3/4] Checking optional AROD checkpoint..."
-mkdir -p outputs/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt
+mkdir -p "$AROD_OUTPUT_DIR"
 if [[ -n "$AROD_ASSET_REPO" ]]; then
   huggingface-cli download "$AROD_ASSET_REPO" "$AROD_ASSET_FILE" \
-    --local-dir outputs/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt
+    --local-dir "$AROD_OUTPUT_DIR"
+elif command -v gdown >/dev/null 2>&1; then
+  gdown_args=()
+  if [[ -n "$AROD_GDOWN_PROXY" ]]; then
+    gdown_args+=(--proxy "$AROD_GDOWN_PROXY")
+  fi
+  gdown "${gdown_args[@]}" "$AROD_GDRIVE_ID" \
+    -O "$AROD_OUTPUT_DIR/blockwise_latest.pt"
 else
   cat <<'EOF'
-AROD_ASSET_REPO is not set, so the AROD checkpoint was not downloaded.
+Neither AROD_ASSET_REPO nor gdown is available, so the AROD checkpoint was not downloaded.
 Place the student checkpoint manually at:
-  outputs/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt/blockwise_latest.pt
+  outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k/blockwise_latest.pt
 
-If your checkpoint is hosted on Hugging Face, rerun with:
+Install gdown and rerun this script, or use Hugging Face:
+  pip install gdown
   AROD_ASSET_REPO=<owner/repo> AROD_ASSET_FILE=blockwise_latest.pt bash scripts/download_assets.sh
 EOF
 fi
 
 echo "[4/4] Asset layout:"
-find checkpoints pretrained_model tools/pretrained_model outputs/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt \
+find checkpoints pretrained_model tools/pretrained_model "$AROD_OUTPUT_DIR" \
   -maxdepth 2 -type f | sort

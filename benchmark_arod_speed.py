@@ -29,7 +29,7 @@ from verify_blockwise_distill import load_checkpoint_config, resolve_checkpoint
 from verify_distill import get_reference
 
 
-DEFAULT_CONFIG = "configs/distill/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml"
+DEFAULT_CONFIG = "configs/distill/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k.yaml"
 DEFAULT_IMAGE = "img_files/person1.png"
 DEFAULT_AUDIO = "wav_files/test_audio_60s.wav"
 

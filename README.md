@@ -91,7 +91,7 @@ StreamAvatar/
     pretrained_model/
       epoch=0-step=312000.ckpt
   outputs/
-    blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt/
+    blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k/
       blockwise_latest.pt
 ```
 
@@ -101,7 +101,15 @@ You can use the helper script for the public base assets:
 bash scripts/download_assets.sh
 ```
 
-By default, the script downloads Wav2Vec2 and tries to fetch the original DyStream assets from `robinwitch/DyStream`. If your AROD checkpoint is hosted on Hugging Face, provide that repository as well:
+By default, the script downloads Wav2Vec2, tries to fetch the original DyStream assets from `robinwitch/DyStream`, and downloads the AROD checkpoint from Google Drive with `gdown`.
+
+If your network needs a SOCKS proxy, pass it to `gdown`:
+
+```bash
+AROD_GDOWN_PROXY=socks5h://127.0.0.1:7891 bash scripts/download_assets.sh
+```
+
+If your AROD checkpoint is hosted on Hugging Face instead, provide that repository:
 
 ```bash
 AROD_ASSET_REPO=<owner/repo> \
@@ -144,10 +152,27 @@ This path matches `tools/visualization_0416/configs/head_animator_best_0506.yaml
 
 ### 4. AROD Student Checkpoint
 
-Download the StreamAvatar AROD student checkpoint from the project release, Hugging Face model repo, or shared artifact storage, then place it here:
+Download the StreamAvatar AROD real-anchor student checkpoint:
+
+```bash
+pip install gdown
+mkdir -p outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k
+gdown "1El-2l5GZRfrVLEl2-x6ocPyyT9ILxDJS" \
+  -O outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k/blockwise_latest.pt
+```
+
+For networks that require a SOCKS proxy, use:
+
+```bash
+gdown --proxy socks5h://127.0.0.1:7891 \
+  "1El-2l5GZRfrVLEl2-x6ocPyyT9ILxDJS" \
+  -O outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k/blockwise_latest.pt
+```
+
+The expected SHA256 is:
 
 ```text
-outputs/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt/blockwise_latest.pt
+01893fabb842fcc8e9817a8e2530108d75932aad4f6ac4136e5c22b94702e860
 ```
 
 `app.py` will also accept `blockwise_best_val.pt`, `blockwise_best.pt`, or `blockwise_last.pt` in the same directory if `blockwise_latest.pt` is not present.
@@ -177,7 +202,7 @@ The built-in sample uses:
 - `img_files/person1.png`
 - `img_files/person1.npz`
 - `wav_files/test_audio_60s.wav`
-- `configs/distill/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml`
+- `configs/distill/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k.yaml`
 
 ## Manual Launch
 
@@ -201,7 +226,7 @@ python verify_blockwise_distill.py \
 Outputs are written under:
 
 ```text
-outputs/verify_blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt_suite/
+outputs/verify_blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k_suite/
 ```
 
 The important metrics are:
@@ -228,7 +253,7 @@ For a faster timing-only check without rendering videos:
 ```bash
 source .venv/bin/activate
 python benchmark_arod_speed.py \
-  --config configs/distill/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml \
+  --config configs/distill/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k.yaml \
   --img-path img_files/person1.png \
   --audio-path wav_files/test_audio_60s.wav \
   --output outputs/arod_speed_benchmark.json
@@ -262,5 +287,5 @@ proposal/StreamAvatar_proposal.pdf
 
 - Do not commit large checkpoints or generated `outputs/` directories.
 - Keep model paths relative to the repository root.
-- The default app config is `configs/distill/blockwise_stream_distill_cross_fm_mixed_trainval_teacher_gt.yaml`.
+- The default app config is `configs/distill/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k.yaml`.
 - AROD is a blockwise autoregressive denoising model, not a conventional flow-only model and not a standard token-by-token GPT decoder.
