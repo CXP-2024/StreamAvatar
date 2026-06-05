@@ -33,7 +33,7 @@
 \maketitle
 
 \begin{abstract}
-StreamAvatar is a real-time-capable audio-driven portrait animation system built by adapting and accelerating DyStream, a pretrained autoregressive flow-matching talking-head model. This report describes the resulting system. We deploy the DyStream teacher, optimize its inference path, build a browser-facing streaming prototype, and train AROD, an Autoregressive One-step Denoising student that predicts short future motion blocks conditioned on audio, history, noisy future tokens, and reference anchors. We further study cross-attention and one-step denoising student variants, real-anchor versus synthetic-anchor conditioning, and supervised training from cached LRS3 motion latents. The optimized teacher path can approach the real-time boundary on a B20Z/B200-class GPU after warm-up, while AROD provides roughly 8$\times$ faster motion inference in a fresh 60-second verification run and has reached about 10$\times$ in the same verification setup. Our experiments show that real cached anchors give the most stable objective behavior, while mixed noise anchors sometimes improve visible motion strength and long-horizon identity consistency but do not reliably improve SyncNet metrics. The final outcome is a real-time-capable StreamAvatar prototype with clear empirical lessons about distilling autoregressive flow-matching portrait animation models.
+StreamAvatar is a real-time-capable audio-driven portrait animation system built by adapting and accelerating DyStream, a pretrained autoregressive flow-matching talking-head model. This report describes the resulting system. We deploy the DyStream teacher, optimize its inference path, provide an offline Gradio demo, and train AROD, an Autoregressive One-step Denoising student that predicts short future motion blocks conditioned on audio, history, noisy future tokens, and reference anchors. We further study cross-attention and one-step denoising student variants, real-anchor versus synthetic-anchor conditioning, and supervised training from cached LRS3 motion latents. The optimized teacher path can approach the real-time boundary on a B20Z/B200-class GPU after warm-up, while AROD provides roughly 8$\times$ faster motion inference in a fresh 60-second verification run and has reached about 10$\times$ in the same verification setup. Our experiments show that real cached anchors give the most stable objective behavior, while mixed noise anchors sometimes improve visible motion strength and long-horizon identity consistency but do not reliably improve SyncNet metrics. The final outcome is a StreamAvatar offline demo and a streaming-capable blockwise inference design, with clear empirical lessons about distilling autoregressive flow-matching portrait animation models.
 \end{abstract}
 
 %======================================================================
@@ -47,13 +47,13 @@ StreamAvatar is designed around a practical observation: a strong pretrained tal
 This report focuses on the implemented system. Our contribution is an engineering and modeling study of real-time-capable audio-driven portrait animation:
 \begin{itemize}
     \item We deploy DyStream locally and analyze its inference bottlenecks.
-    \item We build an optimized and partially streaming inference path with model warm-up, render batching, chunked audio processing, frame queues, and a simple microphone/upload interface.
+    \item We build an optimized offline inference demo and analyze the requirements for extending the blockwise path to streaming playback.
     \item We train blockwise student models that predict future motion blocks directly from audio, history motion, and reference anchors.
     \item We compare real cached anchors, synthetic anchors, and mixed-anchor training, including PCA/t-SNE distribution analysis.
     \item We evaluate with SyncNet/LSE metrics~\cite{syncnet,wav2lip}, landmark-based mouth motion statistics, loss curves, qualitative videos, and speed measurements.
 \end{itemize}
 
-The main result is pragmatic. We do not claim to outperform the teacher in visual quality. Instead, we show that the teacher can be adapted into a real-time-capable system and that a compact blockwise student can substantially reduce motion-generation cost, at the price of some lip-sync and motion fidelity.
+The main result is pragmatic. We do not claim to outperform the teacher in visual quality or to deliver a fully live video-call system. Instead, we show that the teacher path can be made practical as an offline demo and that a compact blockwise student can substantially reduce motion-generation cost, at the price of some lip-sync and motion fidelity.
 
 %======================================================================
 \section{System Overview}
@@ -149,7 +149,7 @@ In our optimized runtime, the teacher path is used in two ways. First, it is the
 
 We first made the DyStream inference path usable as a local application. The important optimizations were not all model-level. Model loading is moved out of the hot path, the reference image is preprocessed once, rendering is batched, and the web app reports stage-level timing. The best practical setting used a small motion chunk size and batched rendering. In our profiling, the original teacher path remains close to the real-time boundary rather than being an order of magnitude faster: a 60-second baseline run was dominated by motion generation and rendering, while warmed-up short-clip tests were around real-time. The large speedup reported later therefore refers to the distilled student motion rollout, not to the full DyStream teacher pipeline.
 
-For the interactive prototype, we added a frame-queue style player. Audio is collected in chunks, processed by the backend, rendered frames are pushed to a queue, and the frontend consumes frames at the target frame rate. We also added a lightweight noise gate for microphone input, because silent microphone noise can drive unwanted mouth motion.
+The current application interface is an offline Gradio demo: a user provides a reference image and an audio file, the backend predicts the full motion sequence, and the renderer writes the output video. A live version would require an additional frame queue, microphone noise handling, browser-side scheduling, and rolling backend state. We treat these as streaming-system requirements rather than claims about the current delivered app.
 
 \subsection{Blockwise Student Distillation}
 
@@ -415,9 +415,9 @@ The anchor study produced a nuanced result. In the original coordinate dimension
 
 The optimized teacher pipeline is close to the real-time boundary on a B20Z/B200-class GPU, especially after warm-up and with batched rendering, but it should not be interpreted as an order-of-magnitude faster-than-real-time system. The larger acceleration comes from AROD, which replaces the expensive teacher motion rollout with direct blockwise one-step denoising. In a fresh verification run with `verify\_blockwise\_distill.py' on a 60.03-second `person1 + test\_audio\_60s.wav' case, the teacher motion rollout took 29.38 seconds while AROD took 3.75 seconds, giving a 7.83$\times$ motion-generation speedup. A separate motion-only benchmark on the same case measured 26.01 seconds for the teacher and 3.25 seconds for AROD, or 8.00$\times$. Earlier verification of the same configuration recorded 10.24$\times$, so we describe the result as approximately 8$\times$ in the latest fresh run and capable of reaching about 10$\times$ under the same setup, rather than a fixed deterministic 10$\times$ for every run.
 
-A real streaming demo also needs warm-up, rolling audio context, rolling motion history, frame buffering, and stable playback. Our current web prototype validates the basic form: models are loaded before inference, audio chunks are processed incrementally, rendered frames are queued, and the frontend plays frames continuously.
+A real streaming demo also needs warm-up, rolling audio context, rolling motion history, frame buffering, stable playback, and a low-latency browser transport. Our current implementation should therefore be read as an offline Gradio demo plus a streaming-capable model design: the AROD student predicts short future blocks autoregressively, so it can be extended to rolling audio windows without changing the core motion model.
 
-The largest remaining gap is interaction latency. Even when throughput is near real time, live streaming latency is bounded by audio chunk duration, backend processing time, render time, and playback buffering. Our current prototype is best described as \textit{real-time-capable} or \textit{near-real-time}, not a fully optimized video-call system.
+The largest remaining gap is interaction latency. Even when throughput is near real time, live streaming latency is bounded by audio chunk duration, backend processing time, render time, and playback buffering. Our current system is best described as \textit{real-time-capable} or \textit{streaming-capable}, not a fully optimized live streaming or video-call application.
 
 %======================================================================
 \section{Discussion}
@@ -439,7 +439,7 @@ For the final demo and report, the real-anchor student should be treated as the 
 \section{Limitations and Future Work}
 %======================================================================
 
-The current evaluation uses a small number of reference images and audio files. A more reliable conclusion needs a multi-speaker benchmark with averaged SyncNet, landmark, identity, and temporal metrics. The current web app is also an experimental prototype. It needs a lower-latency audio transport, stronger front-end frame scheduling, and better handling of browser microphone noise.
+The current evaluation uses a small number of reference images and audio files. A more reliable conclusion needs a multi-speaker benchmark with averaged SyncNet, landmark, identity, and temporal metrics. The current web app is an offline generation demo. A true live streaming version would need lower-latency audio transport, rolling server-side scheduling, stronger front-end frame scheduling, and better handling of browser microphone noise.
 
 Model-wise, the next step is to replace naive synthetic anchors with distribution-aware anchors. A promising direction is PCA/covariance sampling:
 \begin{equation}
@@ -453,7 +453,7 @@ where $U_k$ and $\Sigma_k$ come from real cached anchors. This would sample alon
 \section{Conclusion}
 %======================================================================
 
-StreamAvatar demonstrates a DyStream-based optimization and distillation path for real-time-capable audio-driven portrait animation. We successfully deployed and accelerated the teacher, built a streaming-style app, trained blockwise motion students, and analyzed anchor conditioning. The results show that high-quality pretrained talking-head models can be pushed toward streaming use without training a full renderer, but also that distilling autoregressive flow-matching behavior is not a trivial regression problem. Real anchors are currently the safest training condition; mixed noise anchors are useful as an ablation and regularizer but not a clear improvement. The project therefore provides both a working demo path and a set of lessons for future real-time avatar research.
+StreamAvatar demonstrates a DyStream-based optimization and distillation path for real-time-capable audio-driven portrait animation. We successfully deployed and accelerated the teacher, built an offline AROD demo, trained blockwise motion students, and analyzed anchor conditioning. The results show that high-quality pretrained talking-head models can be pushed toward streaming-capable use without training a full renderer, but also that distilling autoregressive flow-matching behavior is not a trivial regression problem. Real anchors are currently the safest training condition; mixed noise anchors are useful as an ablation and regularizer but not a clear improvement. The project therefore provides both a working offline demo path and a set of lessons for future real-time avatar research.
 
 \bibliographystyle{unsrt}
 \bibliography{ref}
