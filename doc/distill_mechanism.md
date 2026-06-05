@@ -142,7 +142,7 @@ verify_distill.py
   --render
 ```
 
-后续要接入 app 或 `stream_app.py` 时，也是在模型加载完成后加入同样的覆盖逻辑。
+后续要接入当前 `app.py` 时，也是在模型加载完成后加入同样的覆盖逻辑。
 
 ## 当前 distill 不会减少参数量
 
@@ -181,9 +181,9 @@ Renderer 参数量不变
 
 ## 后续加速路线
 
-### 1. 接入 fast app
+### 1. 接入当前 app
 
-在 `stream_app.py` 或现有 app 中增加参数：
+在当前 `app.py` 中增加参数：
 
 ```
 distilled_checkpoint: optional path
@@ -251,4 +251,3 @@ chunk-level render / output
 ```
 
 这部分主要降低 AR backbone 重复计算，并让系统从“整段离线生成”逐步变成“边来音频边出 motion/video chunk”。
-
