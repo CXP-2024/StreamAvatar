@@ -296,13 +296,21 @@
       <div class="wrap">
         <h2>Demo</h2>
         <p class="lead">
-          The current release is an offline Gradio demo with a streaming-capable blockwise motion design. This strip shows four reference portraits driven by the same sample audio.
+          The current release is an offline Gradio demo with a streaming-capable blockwise motion design. The demos below show multi-identity generation and a Person2 teacher/student comparison.
         </p>
         <div class="demo-showcase">
           <div class="media-panel">
             <img src="assets/multi_person_demo.gif" alt="Four AROD talking-head generations driven by the same audio">
             <div class="caption">
-              Same-audio AROD generation across Person1 and three public-domain NASA/Wikimedia reference portraits.
+              Same-audio AROD generation across Person1, Person2, and two public-domain NASA/Wikimedia reference portraits.
+            </div>
+          </div>
+          <div class="media-panel">
+            <video controls playsinline preload="metadata">
+              <source src="assets/person2_three_way_demo.mp4" type="video/mp4">
+            </video>
+            <div class="caption">
+              Person2 three-way video comparison: DyStream teacher, real-anchor AROD student, and mixed-anchor ablation.
             </div>
           </div>
         </div>
