@@ -32,11 +32,12 @@
 \begin{document}
 \maketitle
 \begin{center}
-\textbf{Project repository:} \url{https://github.com/CXP-2024/StreamAvatar}
+\textbf{Project repository:} \url{https://github.com/CXP-2024/StreamAvatar}\\
+\textbf{Project page:} \url{https://cxp-2024.github.io/StreamAvatar/}
 \end{center}
 
 \begin{abstract}
-StreamAvatar is a real-time-capable audio-driven portrait animation system built by adapting and accelerating DyStream, a pretrained autoregressive flow-matching talking-head model. This report describes the resulting system. We deploy the DyStream teacher, optimize its inference path, provide an offline Gradio demo, and train AROD, an Autoregressive One-step Denoising student that predicts short future motion blocks conditioned on audio, history, noisy future tokens, and reference anchors. We further study cross-attention and one-step denoising student variants, real-anchor versus synthetic-anchor conditioning, and supervised training from cached LRS3 motion latents. The optimized teacher path can approach the real-time boundary on a B20Z/B200-class GPU after warm-up, while AROD provides roughly 8$\times$ faster motion inference in a fresh 60-second verification run and has reached about 10$\times$ in the same verification setup. Our experiments show that real cached anchors give the most stable objective behavior, while mixed noise anchors sometimes improve visible motion strength and long-horizon identity consistency but do not reliably improve SyncNet metrics. The final outcome is a StreamAvatar offline demo and a streaming-capable blockwise inference design, with clear empirical lessons about distilling autoregressive flow-matching portrait animation models.
+StreamAvatar is a real-time-capable audio-driven portrait animation system built by adapting and accelerating DyStream, a pretrained autoregressive flow-matching talking-head model. This report describes the resulting system. We deploy the DyStream teacher, optimize its inference path, provide an offline Gradio demo and project page, and train AROD, an Autoregressive One-step Denoising student that predicts short future motion blocks conditioned on audio, history, noisy future tokens, and reference anchors. We further study cross-attention and one-step denoising student variants, real-anchor versus synthetic-anchor conditioning, and supervised training from cached LRS3 motion latents. The optimized teacher path can approach the real-time boundary on a B20Z/B200-class GPU after warm-up, while AROD provides roughly 8$\times$ faster motion inference in a fresh 60-second verification run and has reached about 10$\times$ in the same verification setup. Our experiments show that real cached anchors give the most stable objective behavior, while mixed noise anchors sometimes improve visible motion strength and long-horizon identity consistency but do not reliably improve SyncNet metrics. The qualitative Person2 comparison is rendered as a 60-second three-way video and remains visually identity-consistent across the full long-horizon sequence. The final outcome is a StreamAvatar offline demo, a public project page, and a streaming-capable blockwise inference design, with clear empirical lessons about distilling autoregressive flow-matching portrait animation models.
 \end{abstract}
 
 %======================================================================
@@ -363,11 +364,11 @@ Noise+real student & 8.429 & 3.280 & \textbf{0.0789} & \textbf{0.0359} & 0.0384 
 \bottomrule
 \end{tabular}
 }
-\caption{Person2 60-second comparison. Real anchors are better on SyncNet and latent matching; mixed anchors produce stronger mouth motion.}
+\caption{Person2 60-second comparison. Real anchors are better on SyncNet and latent matching; mixed anchors produce stronger mouth motion. The corresponding three-way rendered video remains visually identity-consistent over the full long-horizon clip.}
 \label{tab:person2}
 \end{table}
 
-The teacher remains the quality reference. Between students, the result is mixed. Real-anchor training gives more conservative and stable teacher-latent imitation. Noise+real mixed anchors can improve visible mouth motion strength and velocity magnitude, but the SyncNet improvement is not consistent across reference images.
+The teacher remains the quality reference. Between students, the result is mixed. Real-anchor training gives more conservative and stable teacher-latent imitation. Noise+real mixed anchors can improve visible mouth motion strength and velocity magnitude, but the SyncNet improvement is not consistent across reference images. Qualitatively, the 60-second Person2 three-way comparison keeps the same facial identity and appearance traits across the long clip, which is important for practical avatar use: the student does not collapse into a different identity after extended autoregressive rollout.
 
 \subsection{Training Curves and Anchor Analysis}
 
@@ -410,7 +411,7 @@ The anchor study produced a nuanced result. In the original coordinate dimension
 \begin{figure}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/comparison_teacher_real_noise_person2_t5.png}
-\caption{Qualitative comparison frame from the three-way video: teacher, real-anchor student, and noise+real-anchor student. In this example, the mixed-anchor student produces a more conservative head pose than the teacher and preserves facial details such as forehead wrinkles more clearly, although this advantage is not consistent across all metrics. Full video is saved in the experiment output directory.}
+\caption{Qualitative comparison frame from the 60-second Person2 three-way video: teacher, real-anchor student, and noise+real-anchor student. In this example, the mixed-anchor student produces a more conservative head pose than the teacher and preserves facial details such as forehead wrinkles more clearly, although this advantage is not consistent across all metrics. The full rendered sequence is used to check long-horizon identity consistency, and a 10-second preview is shown on the project page.}
 \label{fig:qualitative}
 \end{figure}
 

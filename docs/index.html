@@ -296,21 +296,13 @@
       <div class="wrap">
         <h2>Demo</h2>
         <p class="lead">
-          The current release is an offline Gradio demo with a streaming-capable blockwise motion design. The demos below show multi-identity generation and a Person2 teacher/student comparison.
+          The current release is an offline Gradio demo with a streaming-capable blockwise motion design. This demo shows multi-identity generation driven by the same audio.
         </p>
         <div class="demo-showcase">
           <div class="media-panel">
             <img src="assets/multi_person_demo.gif" alt="Four AROD talking-head generations driven by the same audio">
             <div class="caption">
               Same-audio AROD generation across Person1, Person2, and two public-domain NASA/Wikimedia reference portraits.
-            </div>
-          </div>
-          <div class="media-panel">
-            <video controls playsinline preload="metadata">
-              <source src="assets/person2_three_way_demo.mp4" type="video/mp4">
-            </video>
-            <div class="caption">
-              Person2 three-way video comparison: DyStream teacher, real-anchor AROD student, and mixed-anchor ablation.
             </div>
           </div>
         </div>
@@ -340,7 +332,7 @@
       <div class="wrap">
         <h2>Results</h2>
         <p class="lead">
-          The real-anchor student is the primary released model. Mixed/noise-anchor training is reported as an ablation because it can change visible motion strength and long-horizon consistency, but does not consistently improve lip-sync metrics.
+          The real-anchor student is the primary released model. Mixed/noise-anchor training is reported as an ablation because it can change visible motion strength and long-horizon consistency, but does not consistently improve lip-sync metrics. The original Person2 comparison was rendered as a 60-second sequence and remained visually consistent across the full clip.
         </p>
         <div class="cards">
           <div class="card">
@@ -360,8 +352,12 @@
           </div>
         </div>
         <div class="media-panel">
-          <img src="assets/comparison_person2.png" alt="Teacher, real-anchor student, and noise-anchor student comparison">
-          <div class="caption">Person2 qualitative comparison frame used in the report.</div>
+          <video controls playsinline preload="metadata">
+            <source src="assets/person2_three_way_demo.mp4" type="video/mp4">
+          </video>
+          <div class="caption">
+            Person2 three-way comparison clip: DyStream teacher, real-anchor AROD student, and mixed-anchor ablation. This 10-second preview is trimmed from a 60-second verification video, where the reference identity stays consistent across the full long-horizon run.
+          </div>
         </div>
       </div>
     </section>
