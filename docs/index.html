@@ -161,6 +161,14 @@
       background: #101820;
     }
 
+    .demo-showcase {
+      margin-top: 22px;
+    }
+
+    .demo-showcase .media-panel {
+      margin-top: 0;
+    }
+
     .caption {
       padding: 12px 14px;
       border-top: 1px solid var(--line);
@@ -288,18 +296,14 @@
       <div class="wrap">
         <h2>Demo</h2>
         <p class="lead">
-          The current release is an offline Gradio demo with a streaming-capable blockwise motion design. The default assets include a reference portrait and driving audio for quick reproduction.
+          The current release is an offline Gradio demo with a streaming-capable blockwise motion design. This strip shows four reference portraits driven by the same sample audio.
         </p>
-        <div class="grid">
+        <div class="demo-showcase">
           <div class="media-panel">
-            <video controls playsinline preload="metadata">
-              <source src="assets/person1_demo.mp4" type="video/mp4">
-            </video>
-            <div class="caption">Person1 example video with audio, generated from the default sample assets.</div>
-          </div>
-          <div class="media-panel">
-            <img src="assets/arod_demo.gif" alt="Three-way AROD comparison animation">
-            <div class="caption">Three-way comparison preview: teacher, real-anchor student, and mixed/noise-anchor ablation.</div>
+            <img src="assets/multi_person_demo.gif" alt="Four AROD talking-head generations driven by the same audio">
+            <div class="caption">
+              Same-audio AROD generation across Person1 and three public-domain NASA/Wikimedia reference portraits.
+            </div>
           </div>
         </div>
       </div>
