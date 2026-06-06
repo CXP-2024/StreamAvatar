@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StreamAvatar / AROD</title>
+  <meta name="description" content="StreamAvatar: AROD student distillation for faster audio-driven portrait animation.">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212f;
+      --muted: #5f6c7b;
+      --line: #d8dee7;
+      --paper: #f6f8fb;
+      --white: #ffffff;
+      --blue: #2458a6;
+      --teal: #0f766e;
+      --gold: #a16207;
+      --red: #b42318;
+      --shadow: 0 18px 45px rgba(24, 33, 47, 0.10);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    img,
+    video {
+      display: block;
+      max-width: 100%;
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 36px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      background: var(--white);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero-inner {
+      padding: 46px 0 34px;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 880px;
+      font-size: clamp(38px, 7vw, 76px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 850px;
+      margin: 20px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+    }
+
+    .authors {
+      margin-top: 18px;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 9px 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--white);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .button.primary {
+      color: var(--white);
+      background: var(--blue);
+      border-color: var(--blue);
+    }
+
+    .section {
+      padding: 42px 0;
+    }
+
+    .section + .section {
+      border-top: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+      line-height: 1.25;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .lead {
+      max-width: 820px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .media-panel {
+      margin-top: 22px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+      box-shadow: var(--shadow);
+    }
+
+    .media-panel img,
+    .media-panel video {
+      width: 100%;
+      background: #101820;
+    }
+
+    .caption {
+      padding: 12px 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+      background: var(--white);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+
+    .card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+    }
+
+    .metric {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 800;
+      color: var(--blue);
+    }
+
+    .card p {
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .code {
+      margin-top: 18px;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 8px;
+      color: #ecfdf5;
+      background: #142033;
+      font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .resource-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .resource {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+      text-decoration: none;
+    }
+
+    .resource strong {
+      color: var(--ink);
+    }
+
+    .resource span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    footer {
+      padding: 28px 0 42px;
+      color: var(--muted);
+      font-size: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    @media (max-width: 780px) {
+      .grid,
+      .cards,
+      .resource-list {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-inner {
+        padding-top: 34px;
+      }
+
+      .subtitle {
+        font-size: 17px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap hero-inner">
+      <p class="eyebrow">Audio-driven portrait animation</p>
+      <h1>StreamAvatar / AROD</h1>
+      <p class="subtitle">
+        A DyStream-based portrait animation system with an Autoregressive One-step Denoising student that reduces motion rollout cost while preserving the frozen teacher and renderer stack.
+      </p>
+      <p class="authors">PanChangxun · GuoZihan · LiSi</p>
+      <div class="actions" aria-label="Project links">
+        <a class="button primary" href="https://github.com/CXP-2024/StreamAvatar">GitHub</a>
+        <a class="button" href="assets/StreamAvatar_report.pdf">Report PDF</a>
+        <a class="button" href="assets/StreamAvatar_proposal.pdf">Proposal PDF</a>
+        <a class="button" href="https://huggingface.co/pancx/StreamAvatar-AROD">Model on HF</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="section">
+      <div class="wrap">
+        <h2>Demo</h2>
+        <p class="lead">
+          The current release is an offline Gradio demo with a streaming-capable blockwise motion design. The default assets include a reference portrait and driving audio for quick reproduction.
+        </p>
+        <div class="grid">
+          <div class="media-panel">
+            <video controls playsinline preload="metadata">
+              <source src="assets/person1_demo.mp4" type="video/mp4">
+            </video>
+            <div class="caption">Person1 example video with audio, generated from the default sample assets.</div>
+          </div>
+          <div class="media-panel">
+            <img src="assets/arod_demo.gif" alt="Three-way AROD comparison animation">
+            <div class="caption">Three-way comparison preview: teacher, real-anchor student, and mixed/noise-anchor ablation.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <h2>Method</h2>
+        <p class="lead">
+          StreamAvatar keeps DyStream's pretrained audio encoder and renderer, then distills the expensive autoregressive flow-matching motion rollout into a blockwise AROD student.
+        </p>
+        <div class="grid">
+          <div class="media-panel">
+            <img src="assets/system_pipeline.png" alt="StreamAvatar system pipeline">
+            <div class="caption">System pipeline: audio and reference inputs feed a faster student path before frozen rendering.</div>
+          </div>
+          <div class="media-panel">
+            <img src="assets/student_arch.png" alt="AROD student architecture">
+            <div class="caption">AROD student architecture: audio, history, and anchors condition short future motion blocks.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <h2>Results</h2>
+        <p class="lead">
+          The real-anchor student is the primary released model. Mixed/noise-anchor training is reported as an ablation because it can change visible motion strength and long-horizon consistency, but does not consistently improve lip-sync metrics.
+        </p>
+        <div class="cards">
+          <div class="card">
+            <span class="metric">8x</span>
+            <h3>Fresh verification speedup</h3>
+            <p>Motion-only AROD rollout was roughly eight times faster than the DyStream teacher in the latest 60-second verification run.</p>
+          </div>
+          <div class="card">
+            <span class="metric">10x</span>
+            <h3>Observed peak setup</h3>
+            <p>The same verification setup has reached about ten times faster motion rollout under earlier runs.</p>
+          </div>
+          <div class="card">
+            <span class="metric">HF</span>
+            <h3>Public checkpoint</h3>
+            <p>The released AROD real-anchor checkpoint is hosted on Hugging Face with a Google Drive mirror.</p>
+          </div>
+        </div>
+        <div class="media-panel">
+          <img src="assets/comparison_person2.png" alt="Teacher, real-anchor student, and noise-anchor student comparison">
+          <div class="caption">Person2 qualitative comparison frame used in the report.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <h2>Reproduce</h2>
+        <p class="lead">
+          Clone the repository, install dependencies, download the model assets, and launch the Gradio demo.
+        </p>
+        <pre class="code">git clone https://github.com/CXP-2024/StreamAvatar.git
+cd StreamAvatar
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+bash scripts/download_assets.sh
+bash run.sh</pre>
+        <div class="resource-list">
+          <a class="resource" href="https://github.com/CXP-2024/StreamAvatar">
+            <strong>Source code</strong>
+            <span>GitHub repository</span>
+          </a>
+          <a class="resource" href="https://huggingface.co/pancx/StreamAvatar-AROD">
+            <strong>Checkpoint</strong>
+            <span>Hugging Face model repo</span>
+          </a>
+          <a class="resource" href="assets/StreamAvatar_report.pdf">
+            <strong>Report</strong>
+            <span>Final project report</span>
+          </a>
+          <a class="resource" href="assets/StreamAvatar_proposal.pdf">
+            <strong>Proposal</strong>
+            <span>Original project proposal</span>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      StreamAvatar is a course project built on DyStream. The page is served as a static GitHub Pages project site.
+    </div>
+  </footer>
+</body>
+</html>
