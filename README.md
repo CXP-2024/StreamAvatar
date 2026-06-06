@@ -2,6 +2,8 @@
 
 StreamAvatar is an audio-driven portrait animation project built on DyStream. The frozen DyStream teacher provides the reference audio and rendering stack, while our main model is **AROD**: an **Autoregressive One-step Denoising** student that predicts short future motion blocks much faster than the original teacher rollout.
 
+Project page: https://cxp-2024.github.io/StreamAvatar/
+
 ![AROD demo](assets/arod_demo.gif)
 
 ## Architecture
