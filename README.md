@@ -101,15 +101,17 @@ You can use the helper script for the public base assets:
 bash scripts/download_assets.sh
 ```
 
-By default, the script downloads Wav2Vec2, tries to fetch the original DyStream assets from `robinwitch/DyStream`, downloads the AROD checkpoint from Google Drive with `gdown`, and verifies the AROD checkpoint SHA256.
+By default, the script downloads Wav2Vec2, tries to fetch the original DyStream assets from `robinwitch/DyStream`, downloads the AROD checkpoint from the public Hugging Face repo `pancx/StreamAvatar-AROD`, and verifies the AROD checkpoint SHA256.
 
-If your network needs a SOCKS proxy, pass it to `gdown`:
+If you want to use the Google Drive mirror instead, set `AROD_DOWNLOAD_SOURCE=gdrive`. If your network needs a SOCKS proxy, pass it to `gdown`:
 
 ```bash
-AROD_GDOWN_PROXY=socks5h://127.0.0.1:7891 bash scripts/download_assets.sh
+AROD_DOWNLOAD_SOURCE=gdrive \
+AROD_GDOWN_PROXY=socks5h://127.0.0.1:7891 \
+bash scripts/download_assets.sh
 ```
 
-The AROD checkpoint is hosted on Google Drive, not Hugging Face. Hugging Face is only used here for Wav2Vec2 and the original DyStream base assets.
+The Google Drive file is kept as a mirror; Hugging Face is now the default public checkpoint host.
 
 ### 1. DyStream Teacher Checkpoint
 
@@ -144,7 +146,16 @@ This path matches `tools/visualization_0416/configs/head_animator_best_0506.yaml
 
 ### 4. AROD Student Checkpoint
 
-Download the StreamAvatar AROD real-anchor student checkpoint:
+Download the StreamAvatar AROD real-anchor student checkpoint from Hugging Face:
+
+```bash
+pip install huggingface-hub
+mkdir -p outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k
+huggingface-cli download pancx/StreamAvatar-AROD blockwise_latest.pt \
+  --local-dir outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k
+```
+
+Google Drive mirror:
 
 ```bash
 pip install gdown

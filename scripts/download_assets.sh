@@ -5,8 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 DYSTREAM_ASSET_REPO="${DYSTREAM_ASSET_REPO:-robinwitch/DyStream}"
+AROD_ASSET_REPO="${AROD_ASSET_REPO:-pancx/StreamAvatar-AROD}"
+AROD_ASSET_FILE="${AROD_ASSET_FILE:-blockwise_latest.pt}"
 AROD_GDRIVE_ID="${AROD_GDRIVE_ID:-1El-2l5GZRfrVLEl2-x6ocPyyT9ILxDJS}"
 AROD_GDOWN_PROXY="${AROD_GDOWN_PROXY:-}"
+AROD_DOWNLOAD_SOURCE="${AROD_DOWNLOAD_SOURCE:-hf}"
 AROD_OUTPUT_DIR="outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k"
 AROD_SHA256="${AROD_SHA256:-01893fabb842fcc8e9817a8e2530108d75932aad4f6ac4136e5c22b94702e860}"
 
@@ -41,7 +44,10 @@ fi
 
 echo "[3/4] Checking optional AROD checkpoint..."
 mkdir -p "$AROD_OUTPUT_DIR"
-if command -v gdown >/dev/null 2>&1; then
+if [[ "$AROD_DOWNLOAD_SOURCE" == "hf" ]]; then
+  huggingface-cli download "$AROD_ASSET_REPO" "$AROD_ASSET_FILE" \
+    --local-dir "$AROD_OUTPUT_DIR"
+elif [[ "$AROD_DOWNLOAD_SOURCE" == "gdrive" ]] && command -v gdown >/dev/null 2>&1; then
   gdown_args=()
   if [[ -n "$AROD_GDOWN_PROXY" ]]; then
     gdown_args+=(--proxy "$AROD_GDOWN_PROXY")
@@ -50,12 +56,16 @@ if command -v gdown >/dev/null 2>&1; then
     -O "$AROD_OUTPUT_DIR/blockwise_latest.pt"
 else
   cat <<'EOF'
-gdown is not available, so the AROD checkpoint was not downloaded.
+AROD checkpoint was not downloaded.
 Place the student checkpoint manually at:
   outputs/blockwise_stream_distill_cross_fm_teacher_cache_anchor_pretrain_60k/blockwise_latest.pt
 
-Install gdown and rerun this script:
+Default source is Hugging Face:
+  AROD_DOWNLOAD_SOURCE=hf bash scripts/download_assets.sh
+
+Google Drive fallback requires gdown:
   pip install gdown
+  AROD_DOWNLOAD_SOURCE=gdrive bash scripts/download_assets.sh
 EOF
 fi
 
