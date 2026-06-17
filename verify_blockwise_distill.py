@@ -9,6 +9,9 @@ Only three user-facing inputs are kept:
   --img-path          reference image for the second case
   --audio-path        driving audio for the second case, default wav_files/woc.wav
   --train-sample-idx  training sample index for the first case
+  --train-video-path  optional local video for the first case instead of LRS3
+  --train-audio-path  optional audio for --train-video-path if the video audio cannot be decoded
+  --input-only        skip the training/local-video case and only verify --img-path + --audio-path
 """
 
 import argparse
@@ -130,6 +133,28 @@ def load_train_sample(cfg, output_dir, sample_idx):
     video_path = dataset.clips[idx]
     audio_path = write_wav(os.path.join(output_dir, f"train_sample_{idx:06d}.wav"), audio, cfg.model.audio_sr)
     return audio, audio_path, video_path, idx
+
+
+def load_local_video_sample(cfg, output_dir, video_path, audio_path=None):
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"train video not found: {video_path}")
+    if audio_path:
+        audio, _ = librosa.load(audio_path, sr=cfg.model.audio_sr, mono=True)
+        sample_audio_path = audio_path
+    else:
+        try:
+            audio, _ = librosa.load(video_path, sr=cfg.model.audio_sr, mono=True)
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to decode audio from --train-video-path. "
+                "Pass --train-audio-path with a wav file."
+            ) from exc
+        sample_audio_path = write_wav(
+            os.path.join(output_dir, "local_video_audio.wav"),
+            audio,
+            cfg.model.audio_sr,
+        )
+    return audio, sample_audio_path, video_path, 0
 
 
 def extract_first_frame(video_path, output_path):
@@ -335,6 +360,13 @@ def main():
     parser.add_argument("--img-path", default=DEFAULT_IMG)
     parser.add_argument("--audio-path", default=DEFAULT_AUDIO)
     parser.add_argument("--train-sample-idx", type=int, default=0)
+    parser.add_argument("--train-video-path", default=None)
+    parser.add_argument("--train-audio-path", default=None)
+    parser.add_argument(
+        "--input-only",
+        action="store_true",
+        help="Only run the user-provided image/audio case and skip the LRS3/local-video case.",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -359,20 +391,31 @@ def main():
     checkpoint = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in checkpoint.items()}
     student = load_blockwise_student(checkpoint, cfg, device)
 
-    train_output_dir = os.path.join(output_dir, f"train_sample_{args.train_sample_idx:06d}_own_ref")
-    train_audio, train_audio_path, train_video_path, train_idx = load_train_sample(
-        cfg,
-        train_output_dir,
-        args.train_sample_idx,
-    )
-    train_ref_image, train_ref_npz, train_ref_resize = reference_from_train_video(train_video_path, train_output_dir)
-
     image_case_dir = os.path.join(output_dir, "input_image_audio")
     image_ref, image_npz, image_resize = reference_from_image(args.img_path, image_case_dir)
     image_audio, _ = librosa.load(args.audio_path, sr=cfg.model.audio_sr)
 
-    suite_metrics = [
-        run_case(
+    suite_metrics = []
+
+    if not args.input_only:
+        if args.train_video_path:
+            train_output_dir = os.path.join(output_dir, "local_video_own_ref")
+            train_audio, train_audio_path, train_video_path, train_idx = load_local_video_sample(
+                cfg,
+                train_output_dir,
+                args.train_video_path,
+                args.train_audio_path,
+            )
+        else:
+            train_output_dir = os.path.join(output_dir, f"train_sample_{args.train_sample_idx:06d}_own_ref")
+            train_audio, train_audio_path, train_video_path, train_idx = load_train_sample(
+                cfg,
+                train_output_dir,
+                args.train_sample_idx,
+            )
+        train_ref_image, train_ref_npz, train_ref_resize = reference_from_train_video(train_video_path, train_output_dir)
+
+        suite_metrics.append(run_case(
             "train_sample_own_ref",
             teacher,
             student,
@@ -389,7 +432,9 @@ def main():
                 "train_video_path": train_video_path,
                 "train_reference_resize": train_ref_resize,
             },
-        ),
+        ))
+
+    suite_metrics.append(
         run_case(
             "input_image_audio",
             teacher,
@@ -403,8 +448,8 @@ def main():
             image_case_dir,
             device,
             extra_meta={"input_image_resize": image_resize},
-        ),
-    ]
+        )
+    )
 
     with open(os.path.join(output_dir, "suite_metrics.json"), "w", encoding="utf-8") as f:
         json.dump(suite_metrics, f, indent=2)

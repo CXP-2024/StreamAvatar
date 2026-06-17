@@ -218,14 +218,14 @@ python -u app.py --host 0.0.0.0 --port 7860
 
 ## Verify Teacher vs AROD
 
-Run the end-to-end verification suite:
+Run the end-to-end verification suite on the bundled demo image/audio pair:
 
 ```bash
 source .venv/bin/activate
 python verify_blockwise_distill.py \
+  --input-only \
   --img-path img_files/person1.png \
-  --audio-path wav_files/test_audio_60s.wav \
-  --train-sample-idx 0
+  --audio-path wav_files/test_audio_60s.wav
 ```
 
 Outputs are written under:
