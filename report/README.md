@@ -6,7 +6,7 @@ Files:
 
 - `StreamAvatar_report.tex`: main report.
 - `ref.bib`: bibliography.
-- `neurips_2024.sty`: local template style file.
+- `neurips_2026.sty`: local template style file.
 - `figures/`: copied experiment figures and qualitative snapshots.
 - `build.sh`: LaTeX build script.
 

@@ -7,7 +7,7 @@ Files:
 - `StreamAvatar_proposal.tex`: main proposal.
 - `StreamAvatar_proposal.pdf`: compiled proposal.
 - `ref.bib`: bibliography shared with the report.
-- `neurips_2024.sty`: local template style file.
+- `neurips_2026.sty`: local template style file.
 - `build.sh`: LaTeX build script.
 
 Build:

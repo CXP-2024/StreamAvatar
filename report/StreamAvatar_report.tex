@@ -1,6 +1,6 @@
 \documentclass{article}
 
-\usepackage[preprint]{neurips_2024}
+\usepackage[preprint]{neurips_2026}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{hyperref}
@@ -27,7 +27,22 @@
 
 \title{StreamAvatar: Real-Time-Capable Audio-Driven Portrait Animation via DyStream Optimization and Blockwise Motion Distillation}
 
-\author{\normalfont PanChangxun \quad GuoZihan \quad LiSi}
+\author{%
+Pan Changxun\\
+Institute for Interdisciplinary Information Sciences\\
+Tsinghua University\\
+\texttt{pancx24@mails.tsinghua.edu.cn}
+\And
+Guo Zihan\\
+Institute for Interdisciplinary Information Sciences\\
+Tsinghua University\\
+\texttt{guozihan@mails.tsinghua.edu.cn}
+\And
+Li Si\\
+Institute for Interdisciplinary Information Sciences\\
+Tsinghua University\\
+\texttt{s-li24@mails.tsinghua.edu.cn}
+}
 
 \begin{document}
 \maketitle
@@ -451,6 +466,12 @@ Model-wise, the next step is to replace naive synthetic anchors with distributio
     U_k \Sigma_k^{1/2} \epsilon,
 \end{equation}
 where $U_k$ and $\Sigma_k$ come from real cached anchors. This would sample along the real anchor manifold instead of random 512D directions. Another direction is hybrid teacher/cache training: teacher targets preserve natural motion priors such as blinking, while cached-real targets improve grounding to actual LRS3 data.
+
+%======================================================================
+\section{Team Contribution}
+%======================================================================
+
+Pan Changxun led the core AROD student design, training/inference integration, speed verification, and final system assembly. Guo Zihan led data preprocessing, cached motion-latent preparation, asset organization, and reproducibility checks. Li Si studied related adaptation directions including Chinese fine-tuning, helped compare alternative modeling choices, and contributed to evaluation, report writing, and demo presentation. All members jointly discussed the method, reviewed qualitative results, and polished the final report, website, and release materials.
 
 %======================================================================
 \section{Conclusion}

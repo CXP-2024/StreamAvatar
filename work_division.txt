@@ -1,0 +1,41 @@
+StreamAvatar / AROD Work Division
+=================================
+
+Team members:
+- Pan Changxun, Institute for Interdisciplinary Information Sciences, Tsinghua University
+- Guo Zihan, Institute for Interdisciplinary Information Sciences, Tsinghua University
+- Li Si, Institute for Interdisciplinary Information Sciences, Tsinghua University
+
+Overall collaboration:
+All three members participated in topic selection, problem framing, design discussions, qualitative result review, report revision, and final presentation polishing. The project was developed as a collaborative multimodal learning system around audio-driven talking-face generation, with shared responsibility for making the final code, report, and demo coherent.
+
+Pan Changxun:
+- Led the core AROD model direction: an Autoregressive One-step Denoising student for blockwise audio-to-motion prediction.
+- Implemented and integrated the main student inference path with the frozen DyStream teacher audio stack and frozen renderer.
+- Designed and ran the key teacher/student verification experiments, including motion-rollout speed comparison, 60-second long-horizon runs, and Person1/Person2 qualitative checks.
+- Investigated real-anchor, synthetic-anchor, and mixed-anchor training behavior, including how anchor choices affect stability, visible motion strength, and long-horizon identity consistency.
+- Led final system assembly, including the Gradio demo path, GitHub Pages project page, public checkpoint documentation, report figures, and release packaging.
+- Took primary responsibility for debugging environment, checkpoint, and reproducibility issues so the project could be rerun from the README.
+
+Guo Zihan:
+- Led data preparation and preprocessing work, including organizing reference images, driving audio, cached motion-latent assets, and rendered comparison outputs.
+- Helped prepare and validate LRS3-style cached data used by the distillation and anchor-analysis experiments.
+- Managed sample assets used for reproduction and demos, including Person1/Person2 inputs and generated comparison artifacts.
+- Helped verify that README instructions, download scripts, model paths, and local demo commands were practical for a fresh user.
+- Contributed to evaluation organization by checking generated videos, tracking output directories, and helping compare teacher/student/ablation results.
+- Participated in report writing and editing, especially the experimental setup, reproducibility, and asset-description parts.
+
+Li Si:
+- Surveyed related adaptation directions beyond the final implementation, including fine-tuning and possible extension to Chinese audio/speech settings.
+- Helped compare alternative modeling options and failure modes, including direct teacher acceleration, one-step flow matching, blockwise student distillation, and possible data-domain adaptation.
+- Contributed to qualitative analysis of generated talking-face videos, including lip synchronization, mouth-motion strength, head-pose stability, and identity consistency.
+- Helped prepare the motivation and discussion sections of the report, especially limitations, future work, and how the project relates to multimodal audio-visual learning.
+- Contributed to presentation and demo preparation by reviewing the GitHub Pages project page, result captions, and final visual examples.
+- Participated in final report revision and consistency checks across the proposal, report, README, and supplementary demo materials.
+
+Shared final deliverables:
+- Project report in NeurIPS-style format.
+- Public GitHub repository with runnable code and setup instructions.
+- GitHub Pages project page with demo GIF/video, architecture figures, report, and proposal.
+- Reproducibility instructions for downloading model assets and launching the demo.
+- Supplementary qualitative assets, including multi-person same-audio generation and Person2 teacher/student/ablation comparison.
